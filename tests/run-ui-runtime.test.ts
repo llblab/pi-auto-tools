@@ -657,7 +657,11 @@ test("agent settled flush closes a missed-watcher completion race", {
   extension.onSessionShutdown("quit", active.context);
 });
 
-test("a delayed old-session shutdown cannot close the replacement runtime", async () => {
+test("a delayed old-session shutdown cannot close the replacement runtime", {
+  skip: process.platform === "win32"
+    ? "Node's Windows fs watcher asserts when its watched directory is removed"
+    : false,
+}, async () => {
   const definitions = new Map<string, any>();
   const extension = createActorExtensionRuntime({
     getActiveTools: () => [...definitions.keys()],
@@ -680,7 +684,11 @@ test("a delayed old-session shutdown cannot close the replacement runtime", asyn
   extension.onSessionShutdown("quit", beta.context);
 });
 
-test("extension shutdown never re-reads an invalidated context", async () => {
+test("extension shutdown never re-reads an invalidated context", {
+  skip: process.platform === "win32"
+    ? "Node's Windows fs watcher asserts when its watched directory is removed"
+    : false,
+}, async () => {
   const definitions = new Map<string, any>();
   const extension = createActorExtensionRuntime({
     getActiveTools: () => [...definitions.keys()],
