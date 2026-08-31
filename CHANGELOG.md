@@ -2,6 +2,14 @@
 
 > Each release keeps at most 8 outcome records of at most 512 characters.
 
+## 0.52.0: Durable Coordinator Delivery
+
+- `Completion Epochs`: Replaces per-Run terminal turns with one immutable owner-fenced completion batch per idle/settled epoch. Batches retain exact Run generations and terminal timestamps, bound durable and model-facing members, preserve silent and synchronous-stop semantics, and remain eligible after urgent steering.
+- `Presentation Acknowledgment`: Persists completion delivery through `pending`, `queued`, and `presented`; Pi transport acceptance advances only to `queued`, while exact model-bound `context` presentation authorizes generation-fenced terminal handled markers. Duplicate envelopes collapse and altered or conflicting content fails closed.
+- `Recovery-Safe Scheduling`: Stores owner-hashed atomic delivery journals with bounded receipts, attempts, and errors. Restart recovery inspects only the bounded active Pi session chain, retries proven-absent envelopes, preserves uncertain queued evidence, rejects malformed, oversized, duplicate, and symlinked state, and keeps the scheduler directory through stale-temp cleanup.
+- `Explicit Urgent Steering`: Adds durable actor-authored Trace `attention: "steer"` envelopes delivered only through Pi's safe steer boundary. Exact presentation writes generation-fenced `delivery.steer_presented` evidence, suppresses historical replay, and never suppresses the later root-terminal completion batch; `command.done` remains Trace-only regardless of legacy attention fields.
+- `Settled Packed Parity`: Exercises the compiled package against the Pi 0.84.4 lifecycle contract, proving urgent steer presentation precedes its exact completion epoch, with `agent_settled`, follow-up/steer delivery modes, model-bound context acknowledgment, terminal fencing, and durable steer evidence.
+
 ## 0.51.0: Monotonic Run Follow-Ups
 
 - `Root-Owned Follow-Up`: A normal finite Run now produces one automatic agent turn from its root terminal result. Sequence, parallel, repeat, and imported branches remain internal execution topology; each separately launched Run still owns a separate generation and terminal lifecycle.

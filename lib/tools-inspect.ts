@@ -122,7 +122,10 @@ function runtimeTriage(
     const stateDir = typeof run.state_dir === "string" ? run.state_dir : undefined;
     if (!stateDir) return [];
     return RunsTrace.readRunTraceEvents(stateDir)
-      .filter((event) => event.attention === "notify" || event.attention === "followup")
+      .filter((event) =>
+      event.attention === "notify" ||
+      event.attention === "followup" ||
+      event.attention === "steer")
       .map((event) => ({
         run: run.run,
         id: event.id,

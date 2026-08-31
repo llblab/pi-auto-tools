@@ -44,7 +44,8 @@ import {
 import {
   createRunUiObservationState,
   executeRunRetirements,
-  reconcileRunTerminalNotifications,
+  pruneRunUiObservationState,
+  readRunUiSnapshot,
   summarizeRuns,
 } from "../lib/observability.ts";
 import * as Limits from "../lib/limits.ts";
@@ -1268,24 +1269,19 @@ test("Parallel branch failure remains Trace-only when the root Run succeeds", as
       commandDone.every((event) => event.attention === undefined),
       true,
     );
-    const delivered: Array<{ customType: string }> = [];
     const state = createRunUiObservationState();
-    const reconcile = () =>
-      reconcileRunTerminalNotifications({
-        includeAttention: true,
-        ownerId: "session-a",
-        sink: {
-          notify: () => {},
-          sendFollowUp: (message) => delivered.push(message),
-        },
-        state,
-        stateRoot: root,
-      });
-    reconcile();
-    reconcile();
-    assert.deepEqual(
-      delivered.map((message) => message.customType),
-      ["pi-actors-run"],
+    const snapshot = readRunUiSnapshot(state, "session-a", {
+      includeAttention: true,
+      stateRoot: root,
+    });
+    assert.equal(snapshot.transitions.length, 1);
+    assert.equal(snapshot.transitions[0].run, "soft-quorum");
+    assert.deepEqual(snapshot.attentionEvents, []);
+    pruneRunUiObservationState(state, snapshot);
+    assert.equal(
+      readRunUiSnapshot(state, "session-a", { includeAttention: true, stateRoot: root })
+        .transitions.length,
+      1,
     );
   } finally {
     await rm(root, { recursive: true, force: true });

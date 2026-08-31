@@ -26,6 +26,7 @@ import {
 import * as AsyncRuns from "./async-runs.ts";
 import * as Paths from "./paths.ts";
 import * as RunsTrace from "./runs-trace.ts";
+import type { RunCompletionBatchMember } from "./run-delivery.ts";
 import { readJsonlFileResilient } from "./state-readers.ts";
 
 export type RunObservedStatus =
@@ -35,7 +36,7 @@ export type RunObservedStatus =
   | "exited"
   | "cancelled"
   | "killed";
-export type RunTraceAttention = "log" | "notify" | "followup";
+export type RunTraceAttention = "log" | "notify" | "followup" | "steer";
 export type RunTraceLevel = "info" | "warning" | "error";
 
 export interface RunObservation {
@@ -53,6 +54,7 @@ export interface RunObservation {
   terminalHandled?: boolean;
   retireWhen?: string;
   run: string;
+  runInstanceId?: string;
   semanticResult?: RunTerminalSemanticResult;
   tool?: string;
   stateDir?: string;
@@ -147,70 +149,6 @@ export function pruneRunUiObservationState(
     ),
     state.attentionEventIds,
   );
-}
-
-export function deliverRunTransitionNotifications(
-  transitions: RunTransition[],
-  sink: RunUiNotificationSink,
-  inFlight: Set<string> = new Set(),
-): void {
-  for (const transition of transitions) {
-    if (!shouldNotifyRunTransition(transition)) continue;
-    const key = transition.stateDir ?? transition.run;
-    if (inFlight.has(key)) continue;
-    inFlight.add(key);
-    try {
-      const text = formatRunTransitionMessage(transition);
-      sink.notify(text, getRunTransitionNotificationType(transition));
-      if (!shouldSendRunTransitionFollowUp(transition)) continue;
-      sink.sendFollowUp({
-        customType: "pi-actors-run",
-        content: text,
-        display: false,
-        details: transition,
-      });
-      if (transition.stateDir) {
-        AsyncRuns.markRunTerminalNotificationHandled(
-          transition.stateDir,
-          transition.to,
-        );
-      }
-    } catch (error) {
-      if (transition.stateDir) {
-        AsyncRuns.recordRunTerminalDeliveryFailure(
-          transition.stateDir,
-          transition.to,
-          error,
-        );
-      }
-      const message = error instanceof Error ? error.message : String(error);
-      sink.notify(
-        `Actor terminal delivery failed for run:${transition.run}: ${message.replaceAll(/\s+/g, " ").slice(0, 240)}`,
-        "error",
-      );
-    } finally {
-      inFlight.delete(key);
-    }
-  }
-}
-
-export function reconcileRunTerminalNotifications(input: {
-  inFlight?: Set<string>;
-  ownerId: string;
-  sink: RunUiNotificationSink;
-  state: RunUiObservationState;
-  stateRoot?: string;
-  includeAttention?: boolean;
-}): RunUiSnapshot {
-  const snapshot = readRunUiSnapshot(input.state, input.ownerId, {
-    includeAttention: input.includeAttention,
-    stateRoot: input.stateRoot,
-  });
-  deliverRunTransitionNotifications(snapshot.transitions, input.sink, input.inFlight);
-  if (input.includeAttention)
-    deliverRunAttentionNotifications(snapshot.attentionEvents, input.sink);
-  pruneRunUiObservationState(input.state, snapshot);
-  return snapshot;
 }
 
 export function deliverRunAttentionNotifications(
@@ -447,7 +385,9 @@ export interface RunRetirementExecutorOptions {
 export interface RunTransition {
   from: RunObservedStatus;
   run: string;
+  runInstanceId?: string;
   stateDir?: string;
+  terminalAt?: string;
   artifacts?: Record<string, string>;
   launchCorrelation?: Record<string, string>;
   launchSource?: AsyncRuns.AsyncRunLaunchSource;
@@ -477,6 +417,7 @@ export interface RunAttentionEvent {
   level: RunTraceLevel;
   metadata?: Record<string, unknown>;
   run: string;
+  runInstanceId?: string;
   stateDir: string;
   summary: string;
   ts: string;
@@ -513,11 +454,18 @@ function getProgress(status: Record<string, unknown>): Record<string, unknown> {
 
 function getUpdatedAt(status: Record<string, unknown>): string | undefined {
   const progress = getProgress(status);
-  return typeof progress.updatedAt === "string"
-    ? progress.updatedAt
-    : typeof status.createdAt === "string"
-      ? status.createdAt
-      : undefined;
+  const result = status.result &&
+    typeof status.result === "object" &&
+    !Array.isArray(status.result)
+    ? status.result as Record<string, unknown>
+    : {};
+  return typeof result.completed_at === "string"
+    ? result.completed_at
+    : typeof progress.updatedAt === "string"
+      ? progress.updatedAt
+      : typeof status.createdAt === "string"
+        ? status.createdAt
+        : undefined;
 }
 
 function scanRunStateDirs(
@@ -657,6 +605,9 @@ function observeRun(stateDir: string): RunObservation | undefined {
         : {}),
       ...(typeof status.recipe_file === "string"
         ? { recipeFile: status.recipe_file }
+        : {}),
+      ...(typeof status.run_instance_id === "string"
+        ? { runInstanceId: status.run_instance_id }
         : {}),
       ...(status.terminal_handled ? { terminalHandled: true } : {}),
       ...(typeof status.retire_when === "string"
@@ -1060,8 +1011,10 @@ export function detectRunTransitions(
         ...(run.launchSource ? { launchSource: run.launchSource } : {}),
         ...(run.modelPolicy ? { modelPolicy: run.modelPolicy } : {}),
         ...(run.recipeFile ? { recipeFile: run.recipeFile } : {}),
+        ...(run.runInstanceId ? { runInstanceId: run.runInstanceId } : {}),
         ...(run.semanticResult ? { semanticResult: run.semanticResult } : {}),
         ...(run.terminalHandled ? { terminalHandled: true } : {}),
+        ...(run.updatedAt ? { terminalAt: run.updatedAt } : {}),
         to: run.status,
         ...(run.tool ? { tool: run.tool } : {}),
       });
@@ -1107,7 +1060,9 @@ function parseAttentionRecord(
     ...(raw.body !== undefined ? { body: raw.body } : {}),
     ...(raw.data !== undefined ? { data: raw.data } : {}),
     attention:
-      raw.attention === "notify" || raw.attention === "followup"
+      raw.attention === "notify" ||
+      raw.attention === "followup" ||
+      raw.attention === "steer"
         ? raw.attention
         : normalizeTraceAttention(raw.delivery),
     id,
@@ -1119,6 +1074,7 @@ function parseAttentionRecord(
       ? { metadata: raw.metadata as Record<string, unknown> }
       : {}),
     run: run.run,
+    ...(run.runInstanceId ? { runInstanceId: run.runInstanceId } : {}),
     stateDir: run.stateDir,
     summary,
     ts,
@@ -1167,6 +1123,16 @@ export function detectRunAttentionEvents(
     const read = readTraceAttentionRecords(run);
     const retained = new Set<string>();
     const seen = seenEventIds.get(key) ?? new Set<string>();
+    const presentedSteerIds = new Set(read.records.flatMap((record) => {
+      if (
+        record.kind !== "delivery.steer_presented" ||
+        !record.data ||
+        typeof record.data !== "object" ||
+        Array.isArray(record.data)
+      ) return [];
+      const eventId = (record.data as Record<string, unknown>).event_id;
+      return typeof eventId === "string" && eventId ? [eventId] : [];
+    }));
     const start = read.canonical ? 0
       : Math.min(legacyLineCounts.get(key) ?? 0, read.records.length);
     for (const [index, record] of read.records.entries()) {
@@ -1174,8 +1140,14 @@ export function detectRunAttentionEvents(
       if (!event || !shouldNotifyRunAttentionEvent(event) ||
           event.kind === "runtime.trace_compacted") continue;
       retained.add(event.id);
-      if (prime || run.notificationPolicy === "silent") seen.add(event.id);
-      else if (index >= start && !seen.has(event.id)) {
+      if (isRunSteerAttentionEvent(event) && presentedSteerIds.has(event.id)) {
+        seen.add(event.id);
+        continue;
+      }
+      if (run.notificationPolicy === "silent") seen.add(event.id);
+      else if (prime) {
+        if (!isRunSteerAttentionEvent(event)) seen.add(event.id);
+      } else if (index >= start && !seen.has(event.id)) {
         events.push(event); seen.add(event.id);
       }
     }
@@ -1194,7 +1166,20 @@ export function getRunAttentionNotificationType(
 
 export function shouldNotifyRunAttentionEvent(event: RunAttentionEvent): boolean {
   if (event.kind === "command.done") return false;
-  return event.attention === "notify" || event.attention === "followup";
+  return event.attention === "notify" ||
+    event.attention === "followup" ||
+    event.attention === "steer";
+}
+
+export function isRunSteerAttentionEvent(event: RunAttentionEvent): boolean {
+  return event.kind !== "command.done" && event.attention === "steer";
+}
+
+export function retryRunAttentionEvent(
+  state: RunUiObservationState,
+  event: Pick<RunAttentionEvent, "id" | "stateDir">,
+): void {
+  state.attentionEventIds.get(event.stateDir)?.delete(event.id);
 }
 
 export function shouldSendRunAttentionFollowUp(event: RunAttentionEvent): boolean {
@@ -1297,10 +1282,43 @@ export function shouldNotifyRunTransition(transition: RunTransition): boolean {
   );
 }
 
-export function shouldSendRunTransitionFollowUp(
-  transition: RunTransition,
-): boolean {
-  return shouldNotifyRunTransition(transition);
+/** Build exact immutable generation members for owner-journal admission. */
+export function collectRunCompletionBatchMembers(
+  transitions: RunTransition[],
+): RunCompletionBatchMember[] {
+  return transitions.flatMap((transition) => {
+    if (
+      !shouldNotifyRunTransition(transition) ||
+      !transition.stateDir ||
+      !transition.runInstanceId ||
+      !transition.terminalAt ||
+      Number.isNaN(Date.parse(transition.terminalAt))
+    ) return [];
+    const artifactEntries = Object.entries(transition.artifacts ?? {})
+      .filter((entry): entry is [string, string] =>
+        typeof entry[1] === "string" && Boolean(entry[1]))
+      .slice(0, 4);
+    const rawSummary = transition.semanticResult?.summary.trim() ||
+      `Run ${transition.to}.`;
+    return [{
+      ...(artifactEntries.length > 0
+        ? { artifacts: Object.fromEntries(artifactEntries) }
+        : {}),
+      run: transition.run,
+      run_instance_id: transition.runInstanceId,
+      state_dir: transition.stateDir,
+      status: transition.to as RunCompletionBatchMember["status"],
+      summary: rawSummary.length > 1_000
+        ? `${rawSummary.slice(0, 999)}…`
+        : rawSummary,
+      terminal_at: transition.terminalAt,
+    }];
+  }).sort((left, right) =>
+    left.terminal_at.localeCompare(right.terminal_at) ||
+    left.run.localeCompare(right.run) ||
+    left.run_instance_id.localeCompare(right.run_instance_id) ||
+    left.state_dir.localeCompare(right.state_dir)
+  );
 }
 
 const TERMINAL_FOLLOW_UP_ARTIFACT_LIMIT = 4;

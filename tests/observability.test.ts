@@ -12,6 +12,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import {
+  collectRunCompletionBatchMembers,
   countRunningSubagents,
   createRunStateWatcher,
   createRunTerminalReconciliationLoop,
@@ -19,23 +20,23 @@ import {
   detectRunAttentionEvents,
   detectRunTransitions,
   deliverRunAttentionNotifications,
-  deliverRunTransitionNotifications,
   executeRunRetirements,
   findRunRetirementCandidates,
   primeRunAttentionState,
   pruneRunObservationState,
+  pruneRunUiObservationState,
   readRunUiSnapshot,
-  reconcileRunTerminalNotifications,
+  retryRunAttentionEvent,
   formatRunAttentionMessage,
   formatRunTransitionMessage,
   getRunAttentionNotificationType,
   getRunTransitionNotificationType,
+  isRunSteerAttentionEvent,
   renderRunStatus,
   renderSubagentStatus,
   shouldNotifyRunAttentionEvent,
   shouldNotifyRunTransition,
   shouldSendRunAttentionFollowUp,
-  shouldSendRunTransitionFollowUp,
   summarizeRuns,
 } from "../lib/observability.ts";
 import { readProcessIdentity } from "../lib/runs-process.ts";
@@ -63,6 +64,7 @@ async function writeRun(
       createdAt: "2026-01-01T00:00:00.000Z",
       cwd: process.cwd(),
       run,
+      run_instance_id: `generation-${run}`,
       ...(ownerId ? { ownerId } : {}),
       ...(retireWhen ? { retire_when: retireWhen } : {}),
       ...(launchSource ? { launch_source: launchSource } : {}),
@@ -448,6 +450,66 @@ test("Run observability detects terminal transitions", () => {
   assert.equal(previous.get("review"), "done");
 });
 
+test("Run observability projects sorted exact completion generations", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-actors-completion-members-"));
+  const stateDir = join(root, "review");
+  try {
+    await writeRun(root, "review", "done", [], 0, "session-a");
+    await writeFile(
+      join(stateDir, "result.json"),
+      JSON.stringify({ code: 0, completed_at: "2026-01-01T00:00:08.000Z" }),
+    );
+    const summary = summarizeRuns(root, "session-a");
+    assert.equal(summary.runs[0]?.runInstanceId, "generation-review");
+    const members = collectRunCompletionBatchMembers(
+      detectRunTransitions(new Map([[stateDir, "running" as const]]), summary),
+    );
+    assert.deepEqual(members, [{
+      run: "review",
+      run_instance_id: "generation-review",
+      state_dir: stateDir,
+      status: "done",
+      summary: "Run completed.",
+      terminal_at: "2026-01-01T00:00:08.000Z",
+    }]);
+    assert.deepEqual(collectRunCompletionBatchMembers([
+      {
+        from: "running",
+        run: "late",
+        runInstanceId: "generation-late",
+        stateDir: join(root, "late"),
+        terminalAt: "2026-01-01T00:00:09.000Z",
+        to: "failed",
+      },
+      {
+        from: "running",
+        run: "cancelled",
+        runInstanceId: "generation-cancelled",
+        stateDir: join(root, "cancelled"),
+        terminalAt: "2026-01-01T00:00:07.000Z",
+        to: "cancelled",
+      },
+      {
+        from: "running",
+        run: "missing-generation",
+        stateDir: join(root, "missing"),
+        terminalAt: "2026-01-01T00:00:06.000Z",
+        to: "done",
+      },
+      {
+        from: "running",
+        run: "early",
+        runInstanceId: "generation-early",
+        stateDir: join(root, "early"),
+        terminalAt: "2026-01-01T00:00:05.000Z",
+        to: "exited",
+      },
+    ]).map((item) => item.run), ["early", "late"]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("Terminal reconciliation is independent of retained Trace history", async () => {
   const root = await mkdtemp(join(tmpdir(), "pi-actors-terminal-trace-"));
   const stateDir = join(root, "review");
@@ -518,42 +580,16 @@ test("Successful reviews keep semantic output out of follow-up context", async (
     assert.equal(transition.semanticResult?.correlationId, "task-42");
     assert.match(transition.semanticResult?.body ?? "", /^Status: complete/);
     assert.equal((transition.semanticResult?.body?.length ?? 0) <= 4_000, true);
-    const delivered: Array<{
-      content: string;
-      details: unknown;
-      display: false;
-    }> = [];
-    deliverRunTransitionNotifications([transition], {
-      notify: () => {},
-      sendFollowUp: (message) => delivered.push(message),
+    const [member] = collectRunCompletionBatchMembers([transition]);
+    assert.equal(member.summary, "Run completed.");
+    assert.doesNotMatch(JSON.stringify(member), /Status: complete|Finding:|x{100}/);
+    assert.equal(transition.semanticResult?.correlationId, "task-42");
+    assert.match(transition.semanticResult?.body ?? "", /^Status: complete/);
+    assert.deepEqual(transition.semanticResult?.metadata.transport_context, {
+      transport: "telegram",
+      chat_id: 123456,
+      thread_id: 77,
     });
-    assert.equal(delivered.length, 1);
-    assert.equal(delivered[0].display, false);
-    assert.equal(
-      delivered[0].content,
-      `Run: \`review\`\nStatus: \`done\`\nBase: \`${stateDir}\``,
-    );
-    assert.doesNotMatch(delivered[0].content, /Status: complete|Finding:|x{100}/);
-    assert.equal(
-      (delivered[0].details as { semanticResult?: { correlationId?: string } })
-        .semanticResult?.correlationId,
-      "task-42",
-    );
-    assert.match(
-      (delivered[0].details as { semanticResult?: { body?: string } })
-        .semanticResult?.body ?? "",
-      /^Status: complete/,
-    );
-    assert.deepEqual(
-      (delivered[0].details as {
-        semanticResult?: { metadata?: { transport_context?: unknown } };
-      }).semanticResult?.metadata?.transport_context,
-      {
-        transport: "telegram",
-        chat_id: 123456,
-        thread_id: 77,
-      },
-    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -659,16 +695,61 @@ test("Run observability suppresses terminal follow-up after handled stop message
     to: "done" as const,
   };
   assert.equal(shouldNotifyRunTransition(transition), false);
-  assert.equal(shouldSendRunTransitionFollowUp(transition), false);
 });
 
-test("Run observability keeps legacy command completion out of user projection", async () => {
+test("Run observability replays explicit steer after startup until durable admission", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-actors-steer-observe-"));
+  try {
+    await writeRun(root, "review", "running", [], 0, "session-a");
+    const stateDir = join(root, "review");
+    appendRunTraceEvent(stateDir, {
+      attention: "steer",
+      kind: "checkpoint.blocked",
+      level: "warning",
+      summary: "Approval required",
+    });
+    const state = createRunUiObservationState();
+    primeRunAttentionState(state, "session-a", root);
+    const first = readRunUiSnapshot(state, "session-a", { stateRoot: root });
+    assert.equal(first.attentionEvents.length, 1);
+    assert.equal(first.attentionEvents[0]?.attention, "steer");
+    assert.equal(first.attentionEvents[0]?.runInstanceId, "generation-review");
+    assert.equal(isRunSteerAttentionEvent(first.attentionEvents[0]!), true);
+    assert.deepEqual(
+      readRunUiSnapshot(state, "session-a", { stateRoot: root }).attentionEvents,
+      [],
+    );
+    retryRunAttentionEvent(state, first.attentionEvents[0]!);
+    assert.equal(
+      readRunUiSnapshot(state, "session-a", { stateRoot: root }).attentionEvents.length,
+      1,
+    );
+    appendRunTraceEvent(stateDir, {
+      data: {
+        event_id: first.attentionEvents[0]!.id,
+        run_instance_id: "generation-review",
+        steer_id: "steer-a",
+      },
+      kind: "delivery.steer_presented",
+    });
+    const recovered = createRunUiObservationState();
+    primeRunAttentionState(recovered, "session-a", root);
+    assert.deepEqual(
+      readRunUiSnapshot(recovered, "session-a", { stateRoot: root }).attentionEvents,
+      [],
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Run observability keeps command completion steer out of user projection", async () => {
   const root = await mkdtemp(join(tmpdir(), "pi-actors-observe-"));
   try {
     await writeRun(root, "review", "running", [], 0, "session-a");
     await writeFile(
       join(root, "review", "trace.jsonl"),
-      `${JSON.stringify({ id: "command-done", kind: "command.done", summary: "Command pi completed with code 0", attention: "followup", level: "info", data: { artifacts: { report: join(root, "review", "report.md") }, run_files: [join(root, "review", "stdout.log")] }, ts: new Date().toISOString() })}\n`,
+      `${JSON.stringify({ id: "command-done", kind: "command.done", summary: "Command pi completed with code 0", attention: "steer", level: "info", data: { artifacts: { report: join(root, "review", "report.md") }, run_files: [join(root, "review", "stdout.log")] }, ts: new Date().toISOString() })}\n`,
     );
     assert.deepEqual(
       detectRunAttentionEvents(
@@ -677,48 +758,6 @@ test("Run observability keeps legacy command completion out of user projection",
       ),
       [],
     );
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test("Terminal reconciliation supersedes retained command completion attention", async () => {
-  const root = await mkdtemp(join(tmpdir(), "pi-actors-terminal-supersession-"));
-  const stateDir = join(root, "review");
-  try {
-    await writeRun(root, "review", "done", [], 0, "session-a");
-    appendRunTraceEvent(stateDir, {
-      attention: "followup",
-      kind: "command.done",
-      summary: "Reviewer branch completed",
-    });
-    const delivered: Array<{ customType: string }> = [];
-    const state = createRunUiObservationState();
-    reconcileRunTerminalNotifications({
-      includeAttention: true,
-      ownerId: "session-a",
-      sink: {
-        notify: () => {},
-        sendFollowUp: (message) => delivered.push(message),
-      },
-      state,
-      stateRoot: root,
-    });
-    assert.deepEqual(
-      delivered.map((message) => message.customType),
-      ["pi-actors-run"],
-    );
-    reconcileRunTerminalNotifications({
-      includeAttention: true,
-      ownerId: "session-a",
-      sink: {
-        notify: () => {},
-        sendFollowUp: (message) => delivered.push(message),
-      },
-      state,
-      stateRoot: root,
-    });
-    assert.equal(delivered.length, 1);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -756,11 +795,8 @@ test("Terminal reconciliation contains a throwing error handler", () => {
   loop.close();
 });
 
-test("Periodic terminal reconciliation delivers without a watcher event", async () => {
+test("Periodic terminal reconciliation discovers without projecting", async () => {
   const root = await mkdtemp(join(tmpdir(), "pi-actors-terminal-periodic-"));
-  const stateDir = join(root, "review");
-  const secondStateDir = join(root, "audit");
-  const foreignStateDir = join(root, "foreign");
   let loop: ReturnType<typeof createRunTerminalReconciliationLoop> | undefined;
   const degradedWatcher = createRunStateWatcher({
     stateRoot: root,
@@ -773,49 +809,28 @@ test("Periodic terminal reconciliation delivers without a watcher event", async 
     await writeRun(root, "review", "done", [], 0, "session-a");
     await writeRun(root, "audit", "done", [], 0, "session-a");
     await writeRun(root, "foreign", "done", [], 0, "session-b");
-    const delivered: unknown[] = [];
     const state = createRunUiObservationState();
+    let discovered: string[] = [];
     loop = createRunTerminalReconciliationLoop({
       intervalMs: 10,
-      reconcile: () =>
-        reconcileRunTerminalNotifications({
-          ownerId: "session-a",
-          sink: {
-            notify: () => {},
-            sendFollowUp: (message) => delivered.push(message),
-          },
-          state,
-          stateRoot: root,
-        }),
+      reconcile: () => {
+        const snapshot = readRunUiSnapshot(state, "session-a", { stateRoot: root });
+        discovered = snapshot.transitions.map((transition) => transition.run);
+        pruneRunUiObservationState(state, snapshot);
+      },
       refreshWatcher: () => degradedWatcher.refresh(),
     });
     loop.start();
     const deadline = Date.now() + 500;
-    while (Date.now() < deadline) {
-      try {
-        await Promise.all([
-          readFile(join(stateDir, "terminal-handled.json"), "utf8"),
-          readFile(join(secondStateDir, "terminal-handled.json"), "utf8"),
-        ]);
-        break;
-      } catch {
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      }
+    while (Date.now() < deadline && discovered.length < 2) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
     }
-    const handled = JSON.parse(
-      await readFile(join(stateDir, "terminal-handled.json"), "utf8"),
-    );
-    assert.equal(handled.status, "done");
-    assert.equal(delivered.length, 2);
+    assert.deepEqual(discovered.sort(), ["audit", "review"]);
     assert.equal(
       degradedWatcher
         .getDiagnostics()
         .some((diagnostic) => diagnostic.code === "attach_failed"),
       true,
-    );
-    await assert.rejects(
-      readFile(join(foreignStateDir, "terminal-handled.json"), "utf8"),
-      /ENOENT/,
     );
   } finally {
     loop?.close();
@@ -835,106 +850,19 @@ test("Periodic reconciliation recovers missed retained attention events", async 
       kind: "checkpoint.ready",
     });
     const notified: string[] = [];
-    reconcileRunTerminalNotifications({
-      includeAttention: true,
-      ownerId: "session-a",
-      sink: {
+    const reconcileAttention = () => {
+      const snapshot = readRunUiSnapshot(state, "session-a", { stateRoot: root });
+      deliverRunAttentionNotifications(snapshot.attentionEvents, {
         notify: (message) => { notified.push(message); },
         sendFollowUp: () => {},
-      },
-      state,
-      stateRoot: root,
-    });
+      });
+      pruneRunUiObservationState(state, snapshot);
+    };
+    reconcileAttention();
     assert.equal(notified.length, 1);
     assert.match(notified[0], new RegExp(event.kind));
-    reconcileRunTerminalNotifications({
-      includeAttention: true,
-      ownerId: "session-a",
-      sink: {
-        notify: (message) => { notified.push(message); },
-        sendFollowUp: () => {},
-      },
-      state,
-      stateRoot: root,
-    });
+    reconcileAttention();
     assert.equal(notified.length, 1);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test("Terminal reconciliation deduplicates a reentrant watcher race", async () => {
-  const root = await mkdtemp(join(tmpdir(), "pi-actors-terminal-race-"));
-  try {
-    await writeRun(root, "review", "done", [], 0, "session-a");
-    const state = createRunUiObservationState();
-    const inFlight = new Set<string>();
-    let delivered = 0;
-    const reconcile = () =>
-      reconcileRunTerminalNotifications({
-        inFlight,
-        ownerId: "session-a",
-        sink: {
-          notify: () => {},
-          sendFollowUp: () => {
-            delivered += 1;
-            if (delivered === 1) reconcile();
-          },
-        },
-        state,
-        stateRoot: root,
-      });
-    reconcile();
-    assert.equal(delivered, 1);
-    const handled = JSON.parse(
-      await readFile(join(root, "review", "terminal-handled.json"), "utf8"),
-    );
-    assert.equal(handled.status, "done");
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test("Terminal delivery failures stay visible and retry without a handled marker", async () => {
-  const root = await mkdtemp(join(tmpdir(), "pi-actors-terminal-failure-"));
-  const stateDir = join(root, "review");
-  try {
-    await writeRun(root, "review", "done", [], 0, "session-a");
-    const state = createRunUiObservationState();
-    const notifications: string[] = [];
-    let attempts = 0;
-    const reconcile = () =>
-      reconcileRunTerminalNotifications({
-        ownerId: "session-a",
-        sink: {
-          notify: (message) => notifications.push(message),
-          sendFollowUp: () => {
-            attempts += 1;
-            if (attempts === 1) throw new Error("transport unavailable");
-          },
-        },
-        state,
-        stateRoot: root,
-      });
-    reconcile();
-    assert.equal(attempts, 1);
-    assert.match(notifications.at(-1) ?? "", /terminal delivery failed/);
-    const failure = JSON.parse(
-      await readFile(join(stateDir, "terminal-delivery-failure.json"), "utf8"),
-    );
-    assert.equal(failure.attempts, 1);
-    assert.equal(failure.status, "done");
-    assert.equal(failure.error, "transport unavailable");
-    await assert.rejects(
-      readFile(join(stateDir, "terminal-handled.json"), "utf8"),
-      /ENOENT/,
-    );
-    reconcile();
-    assert.equal(attempts, 2);
-    const handled = JSON.parse(
-      await readFile(join(stateDir, "terminal-handled.json"), "utf8"),
-    );
-    assert.equal(handled.status, "done");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -1019,100 +947,6 @@ test("Run-state watcher removes deleted run directories without degradation warn
   }
 });
 
-test("Run observability replays one unhandled terminal transition after reload", async () => {
-  const root = await mkdtemp(join(tmpdir(), "pi-actors-terminal-replay-"));
-  const stateDir = join(root, "review");
-  try {
-    await mkdir(stateDir, { recursive: true });
-    const summary = {
-      cancelled: 0,
-      done: 1,
-      exited: 0,
-      failed: 0,
-      killed: 0,
-      running: 0,
-      runningSubagents: 0,
-      runs: [{ run: "review", stateDir, status: "done" as const }],
-      total: 1,
-    };
-    const transitions = detectRunTransitions(new Map(), summary);
-    assert.deepEqual(transitions, [
-      { from: "running", run: "review", stateDir, to: "done" },
-    ]);
-    const steering: unknown[] = [];
-    deliverRunTransitionNotifications(transitions, {
-      notify: () => {},
-      sendFollowUp: (message) => steering.push(message),
-    });
-    assert.equal(steering.length, 1);
-    const handled = JSON.parse(
-      await readFile(join(stateDir, "terminal-handled.json"), "utf8"),
-    );
-    assert.equal(handled.event, "run.notification");
-    assert.equal(handled.status, "done");
-    const replay = detectRunTransitions(new Map(), {
-      ...summary,
-      runs: [{ ...summary.runs[0], terminalHandled: true }],
-    });
-    assert.deepEqual(replay, []);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test("Run observability retries unhandled terminal follow-up after delivery failure", async () => {
-  const root = await mkdtemp(join(tmpdir(), "pi-actors-terminal-retry-"));
-  const stateDir = join(root, "review");
-  try {
-    await mkdir(stateDir, { recursive: true });
-    const summary = {
-      cancelled: 0,
-      done: 1,
-      exited: 0,
-      failed: 0,
-      killed: 0,
-      running: 0,
-      runningSubagents: 0,
-      runs: [{ run: "review", stateDir, status: "done" as const }],
-      total: 1,
-    };
-    const observed = new Map();
-    const first = detectRunTransitions(observed, summary);
-    const notifications: string[] = [];
-    deliverRunTransitionNotifications(first, {
-      notify: (message) => notifications.push(message),
-      sendFollowUp: () => {
-        throw new Error("delivery failed");
-      },
-    });
-    assert.match(notifications.at(-1) ?? "", /terminal delivery failed/);
-    await assert.rejects(
-      readFile(join(stateDir, "terminal-handled.json"), "utf8"),
-      /ENOENT/,
-    );
-    assert.equal(
-      JSON.parse(await readFile(join(stateDir, "terminal-delivery-failure.json"), "utf8")).attempts,
-      1,
-    );
-    const retry = detectRunTransitions(observed, summary);
-    assert.equal(retry.length, 1);
-    let delivered = 0;
-    deliverRunTransitionNotifications(retry, {
-      notify: () => {},
-      sendFollowUp: () => {
-        delivered += 1;
-      },
-    });
-    assert.equal(delivered, 1);
-    const handled = JSON.parse(
-      await readFile(join(stateDir, "terminal-handled.json"), "utf8"),
-    );
-    assert.equal(handled.status, "done");
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
 test("Run observability reports cancelled terminal transitions clearly", () => {
   const previous = new Map([["music", "running" as const]]);
   const transitions = detectRunTransitions(previous, {
@@ -1134,7 +968,7 @@ test("Run observability reports cancelled terminal transitions clearly", () => {
     "Run: `music`\nStatus: `cancelled`",
   );
   assert.equal(getRunTransitionNotificationType(transitions[0]), "info");
-  assert.equal(shouldSendRunTransitionFollowUp(transitions[0]), false);
+  assert.equal(shouldNotifyRunTransition(transitions[0]), false);
 });
 
 test("Run observability suppresses duplicate handled terminal transitions", () => {
@@ -1160,11 +994,8 @@ test("Run observability suppresses duplicate handled terminal transitions", () =
   assert.equal(shouldNotifyRunTransition(failed), true);
   assert.equal(shouldNotifyRunTransition(cancelled), false);
   assert.equal(shouldNotifyRunTransition(done), true);
+  assert.equal(shouldNotifyRunTransition(failed), true);
   assert.equal(shouldNotifyRunTransition(killed), true);
-  assert.equal(shouldSendRunTransitionFollowUp(failed), true);
-  assert.equal(shouldSendRunTransitionFollowUp(cancelled), false);
-  assert.equal(shouldSendRunTransitionFollowUp(killed), true);
-  assert.equal(shouldSendRunTransitionFollowUp(done), true);
 });
 
 test("Run observability prunes stale entries but retains terminal attention dedupe", () => {

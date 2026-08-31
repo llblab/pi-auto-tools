@@ -28,6 +28,18 @@ const runUiRuntimeSource = await readFile(
   new URL("../lib/run-ui-runtime.ts", import.meta.url),
   "utf8",
 );
+const observabilitySource = await readFile(
+  new URL("../lib/observability.ts", import.meta.url),
+  "utf8",
+);
+const piSource = await readFile(
+  new URL("../lib/pi.ts", import.meta.url),
+  "utf8",
+);
+const runsTraceSource = await readFile(
+  new URL("../lib/runs-trace.ts", import.meta.url),
+  "utf8",
+);
 const inspectorCommandSource = await readFile(
   new URL("../lib/inspector-command.ts", import.meta.url),
   "utf8",
@@ -131,6 +143,29 @@ test("Entrypoint waits for settled Pi lifecycle before automatic reviews", () =>
   assert.match(indexSource, /runtime\.onAgentSettled\(ctx\)/);
   assert.doesNotMatch(indexSource, /pi\.on\("agent_end"/);
   assert.match(extensionRuntimeSource, /onAgentSettled\(ctx\)/);
+  assert.match(
+    extensionRuntimeSource,
+    /if \(!runUiRuntime\.flushCompletionBatch\(ctx\)\) automaticReview\.schedule\(\)/,
+  );
+});
+
+test("Entrypoint delegates model-bound completion presentation", () => {
+  assert.match(indexSource, /pi\.on\("context"/);
+  assert.match(indexSource, /runtime\.onContext\(event\.messages, ctx\)/);
+  assert.match(extensionRuntimeSource, /runUiRuntime\.projectContext\(messages, ctx\)/);
+  assert.match(runUiRuntimeSource, /markRunCompletionBatchPresented/);
+  assert.doesNotMatch(runUiRuntimeSource, /deliverRunTransitionNotifications/);
+  assert.doesNotMatch(observabilitySource, /deliverRunTransitionNotifications/);
+});
+
+test("Urgent steer remains explicit durable and safe-boundary delivered", () => {
+  assert.match(runsTraceSource, /"notify" \| "followup" \| "steer"/);
+  assert.match(piSource, /deliverAs: "steer"/);
+  assert.match(runUiRuntimeSource, /admitRunSteerEnvelope/);
+  assert.match(runUiRuntimeSource, /markRunSteerPresented/);
+  assert.match(runUiRuntimeSource, /markRunSteerPresentationHandled/);
+  assert.match(observabilitySource, /if \(event\.kind === "command\.done"\) return false/);
+  assert.doesNotMatch(observabilitySource, /exit.*steer|steer.*exit/i);
 });
 
 test("Package requires the settled Pi host baseline", () => {
@@ -181,13 +216,16 @@ test("README first-run actor uses a shell-free command template", () => {
   assert.doesNotMatch(readme, /spawn template="[^"]*(?:&&|\|\||[|<>])[^"]*" as=run:demo/);
 });
 
-test("Public guidance preserves monotonic Run follow-up projection", () => {
+test("Public guidance preserves monotonic Run completion projection", () => {
   const readme = readFileSync("README.md", "utf8");
   const asyncRuns = readFileSync("docs/async-runs.md", "utf8");
   assert.match(readme, /Pi 0\.84\.4 or newer/);
   for (const content of [readme, asyncRuns]) {
     assert.match(content, /Generic command lifecycle is Trace-only/);
-    assert.match(content, /root terminal result/);
+    assert.match(content, /completion scheduler/);
+    assert.match(content, /model-bound (?:Pi )?context/);
+    assert.match(content, /steer/);
+    assert.match(content, /next safe (?:assistant\/tool )?boundary/);
     assert.doesNotMatch(content, /events\.command\.done\.delivery/);
   }
   assert.doesNotMatch(

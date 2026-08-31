@@ -1136,30 +1136,51 @@ function stopRun(
 export function markRunTerminalNotificationHandled(
   stateDir: string,
   status: string,
-): void {
-  markTerminalHandled(stateDir, {
-    event: "run.notification",
-    status,
-  });
+  expectedRunInstanceId: string,
+): boolean {
+  const releaseLock = RunsStart.acquireStateStartLock(stateDir);
+  try {
+    if (!existsSync(join(stateDir, "run.json"))) return false;
+    const current = getRunStatus(stateDir);
+    if (
+      current.run_instance_id !== expectedRunInstanceId ||
+      current.status !== status
+    ) return false;
+    markTerminalHandled(stateDir, {
+      event: "run.notification",
+      run_instance_id: expectedRunInstanceId,
+      status,
+    });
+    rmSync(join(stateDir, "terminal-delivery-failure.json"), { force: true });
+    return true;
+  } finally {
+    releaseLock();
+  }
 }
 
-export function recordRunTerminalDeliveryFailure(
+export function markRunSteerPresentationHandled(
   stateDir: string,
-  status: string,
-  error: unknown,
-): void {
-  const path = join(stateDir, "terminal-delivery-failure.json");
-  const previous = readJson(path);
-  const message = (error instanceof Error ? error.message : String(error))
-    .replaceAll(/\s+/g, " ")
-    .trim()
-    .slice(0, 500);
-  writeJsonAtomic(path, {
-    attempts: Math.max(0, Number(previous?.attempts ?? 0)) + 1,
-    error: message || "unknown delivery failure",
-    status,
-    ts: new Date().toISOString(),
-  });
+  expectedRunInstanceId: string,
+  eventId: string,
+  steerId: string,
+): boolean {
+  const releaseLock = RunsStart.acquireStateStartLock(stateDir);
+  try {
+    if (!existsSync(join(stateDir, "run.json"))) return false;
+    const current = getRunStatus(stateDir);
+    if (current.run_instance_id !== expectedRunInstanceId) return false;
+    appendRunTraceEvent(stateDir, {
+      data: {
+        event_id: eventId,
+        run_instance_id: expectedRunInstanceId,
+        steer_id: steerId,
+      },
+      kind: "delivery.steer_presented",
+    });
+    return true;
+  } finally {
+    releaseLock();
+  }
 }
 
 export function cancelRun(

@@ -167,9 +167,14 @@ test("Run Trace rejects addressed-message fields and malformed values", async ()
       () => appendRunTraceEvent(root, { kind: "Checkpoint Ready" }),
       /lowercase semantic token/,
     );
+    assert.equal(appendRunTraceEvent(root, {
+      attention: "steer",
+      kind: "checkpoint.blocked",
+      summary: "Approval required",
+    }).attention, "steer");
     assert.throws(
       () => appendRunTraceEvent(root, { attention: "broadcast", kind: "checkpoint.ready" } as never),
-      /attention must be notify or followup/,
+      /attention must be notify, followup, or steer/,
     );
   } finally {
     await rm(root, { force: true, recursive: true });

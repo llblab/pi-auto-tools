@@ -61,7 +61,160 @@ export interface SessionEvidenceReadOptions {
   maxTurns?: number;
 }
 
+export type ActiveSessionEntryMatch = "present" | "conflict" | undefined;
+export interface ActiveSessionEntryEvidence {
+  examinedBytes: number;
+  examinedEntries: number;
+  reason?: string;
+  status: "present" | "absent" | "conflict" | "unknown";
+}
+
+export interface ActiveSessionEntryEvidenceInput {
+  getEntry(id: string): unknown;
+  leaf: unknown;
+  match(entry: Record<string, unknown>): ActiveSessionEntryMatch;
+  maxBytes?: number;
+  maxEntries?: number;
+}
+
 const SENSITIVE_KEY = /(?:^|[_-])(?:api[-_]?key|authorization|cookie|credential|password|private[-_]?key|secret|secret[-_]?access[-_]?key|token)$|^(?:access|refresh|auth|api)Token$|^(?:clientSecret|privateKey|secretAccessKey)$/i;
+
+function boundedJsonStringBytes(value: string): number {
+  let bytes = Buffer.byteLength(value, "utf8") + 2;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code === 0x22 || code === 0x5c) bytes += 1;
+    else if (code < 0x20) bytes += [0x08, 0x09, 0x0a, 0x0c, 0x0d].includes(code) ? 1 : 5;
+    else if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) index += 1;
+      else bytes += 3;
+    } else if (code >= 0xdc00 && code <= 0xdfff) bytes += 3;
+  }
+  return bytes;
+}
+
+function boundedJsonBytes(
+  value: unknown,
+  ceiling: number,
+  seen = new WeakSet<object>(),
+): number | undefined {
+  if (value === null) return 4;
+  if (typeof value === "string") return boundedJsonStringBytes(value);
+  if (typeof value === "number") return Number.isFinite(value) ? String(value).length : 4;
+  if (typeof value === "boolean") return value ? 4 : 5;
+  if (typeof value !== "object") return undefined;
+  if (seen.has(value)) return undefined;
+  seen.add(value);
+  let bytes = 2;
+  const values: Array<[string | undefined, unknown]> = Array.isArray(value)
+    ? value.map((item) => [
+      undefined,
+      item === undefined || typeof item === "function" || typeof item === "symbol"
+        ? null
+        : item,
+    ])
+    : Object.entries(value as Record<string, unknown>).filter(([, item]) =>
+      item !== undefined && typeof item !== "function" && typeof item !== "symbol");
+  for (const [key, item] of values) {
+    if (bytes > ceiling) break;
+    if (bytes > 2) bytes += 1;
+    if (key !== undefined) bytes += boundedJsonStringBytes(key) + 1;
+    const itemBytes = boundedJsonBytes(item, ceiling - bytes, seen);
+    if (itemBytes === undefined) {
+      seen.delete(value);
+      return undefined;
+    }
+    bytes += itemBytes;
+  }
+  seen.delete(value);
+  return bytes;
+}
+
+/** Walk only the active parent chain under exact entry and byte ceilings. */
+export function inspectBoundedActiveSessionEntries(
+  input: ActiveSessionEntryEvidenceInput,
+): ActiveSessionEntryEvidence {
+  const maxBytes = input.maxBytes ?? Limits.RUN_DELIVERY_SESSION_MAX_BYTES;
+  const maxEntries = input.maxEntries ?? Limits.RUN_DELIVERY_SESSION_MAX_ENTRIES;
+  if (input.leaf === undefined || input.leaf === null) {
+    return { examinedBytes: 0, examinedEntries: 0, status: "absent" };
+  }
+  const visited = new Set<string>();
+  let current: unknown = input.leaf;
+  let examinedBytes = 0;
+  let examinedEntries = 0;
+  while (current !== undefined) {
+    if (!current || typeof current !== "object" || Array.isArray(current)) {
+      return {
+        examinedBytes,
+        examinedEntries,
+        reason: "active session entry is malformed",
+        status: "unknown",
+      };
+    }
+    const entry = current as Record<string, unknown>;
+    if (typeof entry.id !== "string" || !entry.id) {
+      return {
+        examinedBytes,
+        examinedEntries,
+        reason: "active session entry id is malformed",
+        status: "unknown",
+      };
+    }
+    if (visited.has(entry.id)) {
+      return {
+        examinedBytes,
+        examinedEntries,
+        reason: "active session entry cycle detected",
+        status: "unknown",
+      };
+    }
+    visited.add(entry.id);
+    const bytes = boundedJsonBytes(entry, maxBytes - examinedBytes);
+    if (bytes === undefined) {
+      return {
+        examinedBytes,
+        examinedEntries,
+        reason: "active session entry is not serializable",
+        status: "unknown",
+      };
+    }
+    if (examinedEntries >= maxEntries || examinedBytes + bytes > maxBytes) {
+      return {
+        examinedBytes,
+        examinedEntries,
+        reason: "active session evidence exceeds its inspection bound",
+        status: "unknown",
+      };
+    }
+    examinedEntries += 1;
+    examinedBytes += bytes;
+    const matched = input.match(entry);
+    if (matched) return { examinedBytes, examinedEntries, status: matched };
+    if (entry.parentId === null) {
+      return { examinedBytes, examinedEntries, status: "absent" };
+    }
+    if (typeof entry.parentId !== "string" || !entry.parentId) {
+      return {
+        examinedBytes,
+        examinedEntries,
+        reason: "active session parent is malformed",
+        status: "unknown",
+      };
+    }
+    current = input.getEntry(entry.parentId);
+    if (current === undefined) {
+      return {
+        examinedBytes,
+        examinedEntries,
+        reason: "active session parent is unavailable",
+        status: "unknown",
+      };
+    }
+  }
+  return { examinedBytes, examinedEntries, status: "unknown" };
+}
 const SENSITIVE_TEXT = /(bearer\s+)[A-Za-z0-9._~+/=-]+|["']?\b(api[-_]?key|authorization|clientSecret|cookie|password|private[-_]?key|privateKey|secret|secretAccessKey|token)["']?(\s*[:=]\s*)["']?([^\s,;"'}]+)/gi;
 
 function asRecord(value: unknown): Record<string, unknown> {

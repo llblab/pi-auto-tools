@@ -26,6 +26,7 @@ export interface ActorExtensionRuntime {
   discoverResources(metaUrl: string): { skillPaths: string[] } | undefined;
   getRunOwnerId(ctx: Pi.ExtensionContext): string;
   onAgentSettled(ctx: Pi.ExtensionContext): void;
+  onContext(messages: unknown[], ctx: Pi.ExtensionContext): unknown[];
   onSessionShutdown(reason: string, ctx: Pi.ExtensionContext): void;
   onSessionStart(ctx: Pi.ExtensionContext): Promise<void>;
   registerCoreTools(): void;
@@ -142,7 +143,11 @@ export function createActorExtensionRuntime(
     },
     getRunOwnerId,
     onAgentSettled(ctx) {
-      if (activeRunContext === ctx) automaticReview.schedule();
+      if (activeRunContext !== ctx) return;
+      if (!runUiRuntime.flushCompletionBatch(ctx)) automaticReview.schedule();
+    },
+    onContext(messages, ctx) {
+      return runUiRuntime.projectContext(messages, ctx);
     },
     onSessionShutdown(reason, ctx) {
       const ownerId = runOwnerIdsByContext.get(ctx);
