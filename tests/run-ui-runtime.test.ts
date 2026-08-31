@@ -318,7 +318,7 @@ test("idle completion debounce snapshots one immutable completion epoch", async 
   const ownerId = "session-idle-epoch";
   const active = staleContext(ownerId);
   (active.context as any).isIdle = () => true;
-  const harness = runtimeHarness({ deliveryDebounceMs: 12, notificationDelayMs: 1 });
+  const harness = runtimeHarness({ deliveryDebounceMs: 500, notificationDelayMs: 1 });
   harness.setActiveContext(active.context);
   harness.runtime.start(active.context, ownerId);
 
@@ -327,7 +327,7 @@ test("idle completion debounce snapshots one immutable completion epoch", async 
   await delay(5);
   await writeTerminalRun(ownerId, "idle-second", "generation-idle-second");
   harness.watcherOnChange()!();
-  await delay(25);
+  await delay(600);
 
   assert.equal(harness.sentMessages().length, 1);
   assert.match(harness.sentMessages()[0]!.message.content, /Actor completions: 2/);
@@ -618,7 +618,11 @@ test("completion context rejects conflicting or altered batch content", async ()
   harness.runtime.close();
 });
 
-test("agent settled flush closes a missed-watcher completion race", async () => {
+test("agent settled flush closes a missed-watcher completion race", {
+  skip: process.platform === "win32"
+    ? "Node's Windows fs watcher asserts when its watched directory is removed"
+    : false,
+}, async () => {
   const ownerId = "session-settled-race";
   const definitions = new Map<string, any>();
   const sent: any[] = [];
