@@ -1495,6 +1495,110 @@ test("installed Skill Recipe QA matches the source capability inventory", async 
   }
 });
 
+test("packed extension presents explicit steer before its exact completion epoch", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-actors-packed-delivery-"));
+  try {
+    const packageDir = await preparePackedPackage(root);
+    const agentDir = join(root, "agent");
+    const runDir = join(agentDir, "tmp", "pi-actors", "runs", "packed-run");
+    await mkdir(runDir, { recursive: true });
+    const timestamp = new Date().toISOString();
+    await writeFile(join(runDir, "run.json"), JSON.stringify({
+      createdAt: timestamp,
+      cwd: packageDir,
+      notification_policy: "normal",
+      ownerId: "packed-owner",
+      pid: 999_999,
+      run: "packed-run",
+      run_instance_id: "11111111-1111-4111-8111-111111111111",
+      state_dir: runDir,
+    }));
+    await writeFile(join(runDir, "result.json"), JSON.stringify({
+      code: 0,
+      finished_at: timestamp,
+    }));
+    await writeFile(join(runDir, "trace.jsonl"), `${JSON.stringify({
+      attention: "steer",
+      id: "packed-steer-event",
+      kind: "checkpoint.ready",
+      level: "info",
+      summary: "Inspect the packed delivery boundary.",
+      ts: timestamp,
+    })}\n`);
+    const { stdout, stderr } = await execFileAsync(process.execPath, [
+      "-e",
+      `const { readFileSync } = require("node:fs");
+       const { join } = require("node:path");
+       const { pathToFileURL } = require("node:url");
+       const packageDir = process.argv[1];
+       import(pathToFileURL(join(packageDir, "dist", "pi-actors", "index.js")).href).then(async (mod) => {
+         const handlers = new Map();
+         const sent = [];
+         const pi = {
+           getActiveTools: () => [],
+           getAllTools: () => [],
+           getThinkingLevel: () => "off",
+           on: (name, handler) => handlers.set(name, handler),
+           registerCommand: () => {},
+           registerTool: () => {},
+           sendMessage: (message, options) => sent.push({ message, options }),
+           setActiveTools: () => {},
+         };
+         mod.default(pi);
+         const context = {
+           cwd: packageDir,
+           hasUI: true,
+           isIdle: () => true,
+           sessionManager: {
+             getEntry: () => undefined,
+             getLeafEntry: () => undefined,
+             getSessionId: () => "packed-owner",
+           },
+           ui: {
+             notify: () => {},
+             setStatus: () => {},
+             setWidget: () => {},
+             theme: { bold: (value) => value, fg: (_name, value) => value },
+           },
+         };
+         await handlers.get("session_start")({}, context);
+         if (sent[0]?.options?.deliverAs !== "steer") throw new Error("packed steer was not first");
+         await handlers.get("context")({ messages: [sent[0].message] }, context);
+         await handlers.get("agent_settled")({}, context);
+         if (sent[1]?.options?.deliverAs !== "followUp") throw new Error("packed completion was not second");
+         await handlers.get("context")({ messages: [sent[1].message] }, context);
+         await handlers.get("session_shutdown")({}, context);
+         const runDir = join(process.env.PI_CODING_AGENT_DIR, "tmp", "pi-actors", "runs", "packed-run");
+         const handled = JSON.parse(readFileSync(join(runDir, "terminal-handled.json"), "utf8"));
+         const trace = readFileSync(join(runDir, "trace.jsonl"), "utf8");
+         console.log(JSON.stringify({
+           completionType: sent[1].message.customType,
+           handledGeneration: handled.run_instance_id,
+           steerMarker: trace.includes("delivery.steer_presented"),
+           steerType: sent[0].message.customType,
+         }));
+       }).catch((error) => { console.error(error); process.exit(1); });`,
+      packageDir,
+    ], {
+      env: {
+        ...process.env,
+        HOME: root,
+        PI_CODING_AGENT_DIR: agentDir,
+        USERPROFILE: root,
+      },
+    });
+    assert.equal(stderr, "");
+    assert.deepEqual(JSON.parse(stdout), {
+      completionType: "pi-actors-run-batch",
+      handledGeneration: "11111111-1111-4111-8111-111111111111",
+      steerMarker: true,
+      steerType: "pi-actors-run-steer",
+    });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("installed validate-recipe resolves explicit file imports", async () => {
   const root = await mkdtemp(join(tmpdir(), "pi-actors-installed-imports-"));
   try {

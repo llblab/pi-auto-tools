@@ -15,6 +15,9 @@ export default function toolRegistryExtension(pi: Pi.ExtensionAPI) {
   );
   pi.on("session_start", async (_event, ctx) => runtime.onSessionStart(ctx));
   pi.on("agent_settled", async (_event, ctx) => runtime.onAgentSettled(ctx));
+  pi.on("context", async (event, ctx) => ({
+    messages: runtime.onContext(event.messages, ctx) as typeof event.messages,
+  }));
   pi.on("session_shutdown", async (event, ctx) =>
     runtime.onSessionShutdown(event.reason, ctx),
   );

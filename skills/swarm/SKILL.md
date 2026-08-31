@@ -15,7 +15,7 @@ A swarm can be coordinated without an external gateway. In this model the curren
 
 This resembles gateway orchestration in dependency direction but not in ownership: the coordinator is itself an agent instance with inspectable Runs, not an infrastructure service that implicitly creates sessions. Preserve that distinction in prompts, docs, recovery, and target routing.
 
-Once work is delegated, keep the coordinator available for decisions and integration instead of duplicating participant implementation. Wait for terminal follow-up by default; use meaningful attention or evidence-based timers for overdue work rather than a tight inspection loop.
+Once work is delegated, keep the coordinator available for decisions and integration instead of duplicating participant implementation. Wait for the settled completion batch by default; use meaningful attention or evidence-based timers for overdue work rather than a tight inspection loop.
 
 ## Reasoning allocation
 

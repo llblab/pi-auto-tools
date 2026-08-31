@@ -14,7 +14,7 @@ A rare Skill Recipe may declare `singleton: true`. Do not pass `as`: the runtime
 
 ## Observe
 
-Normally wait for terminal follow-up. Inspect only when requested, when meaningful attention arrives, or when the Run is overdue or blocked:
+Normally wait for the settled completion batch. Inspect only when requested, when meaningful attention arrives, or when the Run is overdue or blocked:
 
 ```text
 inspect target=run:<id> view=recipe

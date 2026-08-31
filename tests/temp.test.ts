@@ -23,23 +23,28 @@ test("Extension temp cleanup removes stale files and directories", async () => {
   const staleFile = join(root, "old.txt");
   const staleDir = join(root, "old-dir");
   const freshFile = join(root, "fresh.txt");
+  const deliveryDir = join(root, "delivery");
   const runsDir = join(root, "runs");
   try {
     await mkdir(staleDir, { recursive: true });
+    await mkdir(deliveryDir, { recursive: true });
     await mkdir(runsDir, { recursive: true });
     await writeFile(staleFile, "old");
     await writeFile(join(staleDir, "nested.txt"), "old");
+    await writeFile(join(deliveryDir, "projection.json"), "old but protected");
     await writeFile(join(runsDir, "run.json"), "old but protected");
     await writeFile(freshFile, "fresh");
     const now = Date.now();
     const old = new Date(now - 2000);
     await utimes(staleFile, old, old);
     await utimes(staleDir, old, old);
+    await utimes(deliveryDir, old, old);
     await utimes(runsDir, old, old);
     const removed = await cleanupStaleTempEntries(root, 1000, now);
     assert.equal(removed, 2);
     await assert.rejects(stat(staleFile));
     await assert.rejects(stat(staleDir));
+    assert.equal((await stat(deliveryDir)).isDirectory(), true);
     assert.equal((await stat(runsDir)).isDirectory(), true);
     assert.equal((await stat(freshFile)).isFile(), true);
   } finally {

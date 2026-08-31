@@ -85,7 +85,7 @@ There are two distinct multi-instance shapes:
 
 In host-coordinator mode, the top-level agent receives declarative outcomes, preserves user authority and global context, delegates bounded concrete execution, and owns integration plus final validation. It is not merely another worker after delegation begins. One bounded implementation worker normally runs with reasoning off; consequential output receives a separate reasoning-enabled review. Several independent participants or reviewers additionally use `swarm`.
 
-Delegation is not mandatory for every prompt. Work inline when one short bounded act has one natural validation boundary and spawning would add more coordination than isolation, latency hiding, clean context, or continued coordinator availability can repay. For admitted delegation, prefer terminal follow-up and durable Trace/artifacts; inspect on meaningful attention, operator request, or an evidence-based overdue timer rather than busy polling.
+Delegation is not mandatory for every prompt. Work inline when one short bounded act has one natural validation boundary and spawning would add more coordination than isolation, latency hiding, clean context, or continued coordinator availability can repay. For admitted delegation, prefer the settled completion batch and durable Trace/artifacts; inspect on meaningful attention, operator request, or an evidence-based overdue timer rather than busy polling. Treat `attention: "steer"` as an actor-authored urgent semantic checkpoint at Pi's next safe boundary, never as a status-derived completion signal; the later root terminal still arrives through its ordinary completion batch.
 
 ## Run workflow
 
@@ -97,7 +97,7 @@ Run = Recipe + Trace + Control
 ```
 
 1. Spawn with the exact logical Recipe identity and caller-owned values.
-2. Retain the returned `run:<id>` and normally wait for terminal follow-up instead of polling.
+2. Retain the returned `run:<id>` and normally wait for its settled completion batch instead of polling.
 3. Inspect `view=trace` when retained observations or attention matter.
 4. Inspect `view=control` before diagnosing service readiness, stale work, or saturation.
 5. Send `message` only for an action declared and consumed by that controlled Recipe.

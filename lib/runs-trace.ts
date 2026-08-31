@@ -35,7 +35,7 @@ export interface TraceEvent {
   summary?: string;
   data?: unknown;
   level?: "info" | "warning" | "error";
-  attention?: "notify" | "followup";
+  attention?: "notify" | "followup" | "steer";
 }
 
 export interface AppendTraceEventInput {
@@ -167,9 +167,10 @@ function normalizeTraceEventInput(input: unknown): AppendTraceEventInput {
   if (
     record.attention !== undefined &&
     record.attention !== "notify" &&
-    record.attention !== "followup"
+    record.attention !== "followup" &&
+    record.attention !== "steer"
   ) {
-    throw new Error("Trace event attention must be notify or followup");
+    throw new Error("Trace event attention must be notify, followup, or steer");
   }
   return {
     kind: record.kind,
@@ -295,7 +296,8 @@ function isTraceEvent(value: unknown): value is TraceEvent {
   ) return false;
   return record.attention === undefined ||
     record.attention === "notify" ||
-    record.attention === "followup";
+    record.attention === "followup" ||
+    record.attention === "steer";
 }
 
 function isCount(value: unknown): value is number {

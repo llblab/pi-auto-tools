@@ -5,6 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import {
+  inspectBoundedActiveSessionEntries,
   readSessionEvidence,
   redactSessionEvidenceValue,
 } from "../lib/session-evidence.ts";
@@ -116,6 +117,40 @@ test("session evidence rejects oversized files before materializing JSONL", asyn
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("bounded active session evidence distinguishes presence absence and uncertainty", () => {
+  const entries = new Map<string, Record<string, unknown>>([
+    ["root", { id: "root", parentId: null, type: "message" }],
+    ["batch", { id: "batch", parentId: "root", type: "custom_message" }],
+    ["leaf", { id: "leaf", parentId: "batch", type: "message" }],
+  ]);
+  const inspect = (matchId: string, maxEntries = 10) =>
+    inspectBoundedActiveSessionEntries({
+      getEntry: (id) => entries.get(id),
+      leaf: entries.get("leaf"),
+      match: (item) => item.id === matchId ? "present" : undefined,
+      maxEntries,
+    });
+  assert.deepEqual(inspect("batch").status, "present");
+  assert.deepEqual(inspect("missing").status, "absent");
+  assert.deepEqual(inspect("root", 1).status, "unknown");
+  assert.match(inspectBoundedActiveSessionEntries({
+    getEntry: () => undefined,
+    leaf: { content: "x".repeat(10_000), id: "large", parentId: null },
+    match: () => undefined,
+    maxBytes: 128,
+  }).reason ?? "", /inspection bound/);
+
+  entries.set("batch", { id: "batch", parentId: "missing" });
+  assert.match(inspect("missing").reason ?? "", /parent is unavailable/);
+  entries.set("batch", { id: "batch", parentId: "leaf" });
+  assert.match(inspect("missing").reason ?? "", /cycle/);
+  assert.equal(inspectBoundedActiveSessionEntries({
+    getEntry: () => undefined,
+    leaf: { id: "conflict", parentId: null },
+    match: () => "conflict",
+  }).status, "conflict");
 });
 
 test("session evidence redaction handles nested values and circular objects", () => {

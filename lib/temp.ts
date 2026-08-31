@@ -14,7 +14,7 @@ export async function cleanupStaleTempEntries(
   tempDir: string,
   maxAgeMs = DEFAULT_TEMP_MAX_AGE_MS,
   now = Date.now(),
-  preservedEntries = new Set(["runs"]),
+  preservedEntries = new Set(["runs", "delivery"]),
 ): Promise<number> {
   let entries: Array<{ name: string }>;
   let removed = 0;
