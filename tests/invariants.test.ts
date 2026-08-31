@@ -46,7 +46,10 @@ const reviewControlSource = await readFile(
 );
 const packageJson = JSON.parse(
   await readFile(new URL("../package.json", import.meta.url), "utf8"),
-) as { scripts?: Record<string, string> };
+) as {
+  peerDependencies?: Record<string, string>;
+  scripts?: Record<string, string>;
+};
 const normalizeNewlines = (source: string): string => source.replaceAll("\r\n", "\n");
 const validateWorkflowSource = normalizeNewlines(await readFile(
   new URL("../.github/workflows/validate.yml", import.meta.url),
@@ -123,6 +126,20 @@ test("Session shutdown tears down exact-parent runs through the run UI runtime",
   assert.match(runUiRuntimeSource, /session_shutdown:\$\{eventReason\}/);
 });
 
+test("Entrypoint waits for settled Pi lifecycle before automatic reviews", () => {
+  assert.match(indexSource, /pi\.on\("agent_settled"/);
+  assert.match(indexSource, /runtime\.onAgentSettled\(ctx\)/);
+  assert.doesNotMatch(indexSource, /pi\.on\("agent_end"/);
+  assert.match(extensionRuntimeSource, /onAgentSettled\(ctx\)/);
+});
+
+test("Package requires the settled Pi host baseline", () => {
+  assert.deepEqual(packageJson.peerDependencies, {
+    "@earendil-works/pi-coding-agent": ">=0.84.4",
+    "@earendil-works/pi-tui": ">=0.84.4",
+  });
+});
+
 test("Entrypoint delegates low-level review and run lifecycle operations", () => {
   assert.match(extensionRuntimeSource, /AutomaticReviewRuntime\.createAutomaticReviewRuntime/);
   assert.match(extensionRuntimeSource, /RunUiRuntime\.createRunUiRuntime/);
@@ -162,6 +179,21 @@ test("README first-run actor uses a shell-free command template", () => {
   const readme = readFileSync("README.md", "utf8");
   assert.match(readme, /spawn template="sleep 30" as=run:demo/);
   assert.doesNotMatch(readme, /spawn template="[^"]*(?:&&|\|\||[|<>])[^"]*" as=run:demo/);
+});
+
+test("Public guidance preserves monotonic Run follow-up projection", () => {
+  const readme = readFileSync("README.md", "utf8");
+  const asyncRuns = readFileSync("docs/async-runs.md", "utf8");
+  assert.match(readme, /Pi 0\.84\.4 or newer/);
+  for (const content of [readme, asyncRuns]) {
+    assert.match(content, /Generic command lifecycle is Trace-only/);
+    assert.match(content, /root terminal result/);
+    assert.doesNotMatch(content, /events\.command\.done\.delivery/);
+  }
+  assert.doesNotMatch(
+    asyncRuns,
+    /"kind":"command\.done"[^\n]*"attention"/,
+  );
 });
 
 test("Platform guidance uses one portable FIFO and named-pipe envelope", () => {

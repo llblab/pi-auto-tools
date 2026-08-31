@@ -2,6 +2,13 @@
 
 > Each release keeps at most 8 outcome records of at most 512 characters.
 
+## 0.51.0: Monotonic Run Follow-Ups
+
+- `Root-Owned Follow-Up`: A normal finite Run now produces one automatic agent turn from its root terminal result. Sequence, parallel, repeat, and imported branches remain internal execution topology; each separately launched Run still owns a separate generation and terminal lifecycle.
+- `Trace-Only Command Lifecycle`: Consolidates each command completion into one complete bounded `command.done` observation with level, captures, session provenance, artifacts, and execution evidence, but no attention. Legacy `command.done` attention remains non-projectable, and the removed Recipe-level delivery grammar stays removed.
+- `Monotonic Reconciliation`: Delivers terminal transitions before explicit semantic attention, preserves silent Runs, synchronous stop behavior, generation fencing, terminal retry evidence, and semantic checkpoints, and removes branch exit-code heuristics that could wake the coordinator from stale process-level events.
+- `Settled Pi Baseline`: Requires Pi and Pi TUI 0.84.4 or newer and schedules automatic Recipe review on `agent_settled`, after queued follow-ups, retries, and compaction complete. Source and packed-package regressions pin the lifecycle and minimum peer contract.
+
 ## 0.50.0: Hardened Actor Baseline
 
 - `Template Recipe Standard`: Rebuilt the Recipe authoring guide around one current-state contract: formats, identity, uniformly detailed file-level and command-node field tables, resolution precedence, imports, async/singleton lifecycle, Control, artifacts, runtime origins, provenance, authoring workflow, and validation. Removed migration history and legacy-reference narration from the normative document.

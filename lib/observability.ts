@@ -206,9 +206,9 @@ export function reconcileRunTerminalNotifications(input: {
     includeAttention: input.includeAttention,
     stateRoot: input.stateRoot,
   });
+  deliverRunTransitionNotifications(snapshot.transitions, input.sink, input.inFlight);
   if (input.includeAttention)
     deliverRunAttentionNotifications(snapshot.attentionEvents, input.sink);
-  deliverRunTransitionNotifications(snapshot.transitions, input.sink, input.inFlight);
   pruneRunUiObservationState(input.state, snapshot);
   return snapshot;
 }
@@ -1193,6 +1193,7 @@ export function getRunAttentionNotificationType(
 }
 
 export function shouldNotifyRunAttentionEvent(event: RunAttentionEvent): boolean {
+  if (event.kind === "command.done") return false;
   return event.attention === "notify" || event.attention === "followup";
 }
 

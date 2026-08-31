@@ -1,6 +1,6 @@
 {
   "name": "@llblab/pi-actors",
-  "version": "0.50.0",
+  "version": "0.51.0",
   "private": false,
   "description": "Local Actor Kernel for Pi",
   "keywords": [
@@ -66,8 +66,8 @@
     "image": "https://raw.githubusercontent.com/llblab/pi-actors/main/banner.jpg"
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*",
-    "@earendil-works/pi-tui": "*"
+    "@earendil-works/pi-coding-agent": ">=0.84.4",
+    "@earendil-works/pi-tui": ">=0.84.4"
   },
   "devDependencies": {
     "@types/node": "latest",
