@@ -52,12 +52,13 @@ diagnostics.jsonl
 Trace records strict bounded events:
 
 ```json
-{"id":"…","ts":"…","kind":"command.done","summary":"Command completed","data":{"code":0},"level":"info","attention":"followup"}
+{"id":"…","ts":"…","kind":"command.done","summary":"Command completed","data":{"code":0},"level":"info"}
+{"id":"…","ts":"…","kind":"checkpoint.ready","summary":"Review needs a decision","level":"info","attention":"followup"}
 ```
 
 Required fields: `id`, `ts`, `kind`. Optional fields: `summary`, `data`, `level`, `attention`. Trace rejects addressed-envelope fields and malformed or oversized data. It retains a recent suffix within 2,048 events and 4 MiB. When either bound would be exceeded, the canonical lock atomically keeps a newest suffix near the lower targets, the new event, and one cumulative warning-only `runtime.trace_compacted` marker. The marker means older history was discarded; it reports cumulative drop evidence and never requests attention.
 
-Runtime lifecycle, runner progress, command completion, cancellation, kill, parent teardown, and controlled-service observations use Trace. Bounded reads preserve complete UTF-8 lines and disclose omitted legacy prefixes. `inspect view=trace` reports retained-history completeness and projects events with Controls, owned Pi turns, logs, results, artifacts, and diagnostics newest-first. Equal timestamps use same-source physical order, then fixed source rank and stable id without claiming cross-source causality. Terminal state, `result.json`, `execution.json`, and artifacts remain authoritative even when old Trace has compacted.
+Runtime lifecycle, runner progress, command completion, cancellation, kill, parent teardown, and controlled-service observations use Trace. Generic command lifecycle is Trace-only: runner-owned `command.done` records preserve level, captures, session provenance, and execution evidence but never request or project attention. No Recipe field configures command-completion delivery. Semantic checkpoints opt in explicitly with `attention: "notify"` or `attention: "followup"`; they must not infer coordinator intent from a leaf exit code. Bounded reads preserve complete UTF-8 lines and disclose omitted legacy prefixes. `inspect view=trace` reports retained-history completeness and projects events with Controls, owned Pi turns, logs, results, artifacts, and diagnostics newest-first. Equal timestamps use same-source physical order, then fixed source rank and stable id without claiming cross-source causality. Terminal state, `result.json`, `execution.json`, and artifacts remain authoritative even when old Trace has compacted.
 
 ## Control
 
@@ -106,7 +107,9 @@ Review acceptance remains a command-stage concern. General execution evidence do
 
 Statuses include `running`, `done`, `failed`, `exited`, `cancelled`, and `killed`. Status resolution combines persisted metadata, result/terminal evidence, and verified process state.
 
-Ambient observation detects terminal transitions and retained Trace attention. Canonical attention is an in-memory wake hint, not a durable queue: observers prime retained ids at startup, deliver each later retained unseen id once, and bound memory to the current retained set across compaction. Persist durable recovery state or an artifact before emitting attention; compaction may discard older hints and its marker makes that history loss explicit. Terminal follow-up delivery persists handled/failure evidence so reloads retry unhandled transitions without duplicating completed notifications.
+Ambient observation detects root terminal transitions and explicit retained Trace attention. Terminal transitions reconcile before semantic attention. Canonical attention is an in-memory wake hint, not a durable queue: observers prime retained ids at startup, deliver each later retained unseen id once, and bound memory to the current retained set across compaction. Persist durable recovery state or an artifact before emitting attention; compaction may discard older hints and its marker makes that history loss explicit. Terminal follow-up delivery persists handled/failure evidence so reloads retry unhandled transitions without duplicating completed notifications.
+
+By default, one normal finite Run produces exactly one automatic agent turn from its root terminal result. Sequence, parallel, repeat, and imported branches are internal execution topology and never own branch-level turns. Each separately launched Run owns its own generation and terminal lifecycle; compatible singleton reuse is not a new launch. Explicit semantic attention may intentionally add a checkpoint turn; Runs marked silent suppress automatic projection.
 
 Large semantic results stay outside compact visible follow-up text and remain available in structured details, execution captures, or artifacts.
 

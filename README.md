@@ -19,7 +19,7 @@ This topology does not require every task to become a subagent. Short work with 
 
 ## Install
 
-Requires Node.js 22.19.0 or newer.
+Requires Node.js 22.19.0 or newer and Pi 0.84.4 or newer.
 
 ```bash
 pi install npm:@llblab/pi-actors
@@ -151,7 +151,9 @@ String command-template leaves execute directly without shell interpretation. Us
 
 Trace fields are exact: `id`, `ts`, `kind`, and optional `summary`, `data`, `level`, `attention`. Address, sender, recipient, reply, and routing fields fail validation. Trace is a bounded retained suffix, not an audit archive: the canonical authority appends within 2,048 events and 4 MiB or atomically keeps the newest suffix plus one warning-only `runtime.trace_compacted` marker. That marker means older history was discarded; `result.json`, `execution.json`, terminal state, and declared artifacts retain their own authority. `inspect view=trace` reports whether retained history is complete. Reads are newline-safe and deterministic; first-party scripts never write this file directly.
 
-Attention is a live wake hint, not a durable queue: persist recovery state or an artifact first. Use `attention: "notify"` for visible status and `attention: "followup"` only when the coordinator needs semantic follow-up context; compaction may discard older hints. Store large evidence in artifacts or bounded execution captures.
+Generic command lifecycle is Trace-only: runner-owned `command.done` records preserve completion and execution evidence but never request or project attention. There is no Recipe-level command-completion delivery switch. Attention is an explicit semantic opt-in and a live wake hint, not a durable queue: persist recovery state or an artifact first, use `attention: "notify"` for visible status and `attention: "followup"` only when the coordinator needs semantic follow-up context, and expect compaction to discard older hints. Store large evidence in artifacts or bounded execution captures.
+
+By default, one normal finite Run produces one automatic agent turn from its root terminal result. Sequence, parallel, repeat, and imported branches remain internal to that Run and do not create branch-level turns; each separately launched Run owns its own generation and terminal follow-up.
 
 ## Control
 

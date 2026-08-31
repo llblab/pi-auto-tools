@@ -284,9 +284,6 @@ export async function runAsyncRunner(stateDir = process.argv[2]) {
       complete_allowed: missing.length === 0,
     };
   }
-  function getCommandDoneDelivery(result) {
-    return result.code !== 0 || activeSubagents > 0 ? "followup" : "log";
-  }
   function progressRunning() {
     progress("running", {
       activeSubagents,
@@ -433,21 +430,6 @@ export async function runAsyncRunner(stateDir = process.argv[2]) {
         ...(preflightDiagnostic ? { preflight: preflightDiagnostic } : {}),
       });
     }
-    event("command.done", {
-      activeSubagents,
-      command_id: commandId,
-      code: result.code,
-      command: commandDetail,
-      killed: result.killed,
-      ...captureDetails(result),
-      ...(materialized.promptFile ? { prompt_file: materialized.promptFile } : {}),
-      ...(materialized.promptBytes ? { prompt_bytes: materialized.promptBytes } : {}),
-      ...(session.sessionDir ? { session_dir: relative(stateDir, session.sessionDir).replaceAll("\\", "/") } : {}),
-      ...(commandSessionFiles(session.sessionDir).length > 0
-        ? { session_files: commandSessionFiles(session.sessionDir) }
-        : {}),
-      ...(preflightDiagnostic ? { preflight: preflightDiagnostic } : {}),
-    });
     observation(
       "command.done",
       `Command ${summarizeCommandDetail(commandDetail)} completed with code ${result.code}`,
@@ -462,9 +444,13 @@ export async function runAsyncRunner(stateDir = process.argv[2]) {
         ...captureDetails(result),
         ...(materialized.promptFile ? { prompt_file: materialized.promptFile } : {}),
         ...(materialized.promptBytes ? { prompt_bytes: materialized.promptBytes } : {}),
+        ...(session.sessionDir ? { session_dir: relative(stateDir, session.sessionDir).replaceAll("\\", "/") } : {}),
+        ...(commandSessionFiles(session.sessionDir).length > 0
+          ? { session_files: commandSessionFiles(session.sessionDir) }
+          : {}),
         ...(preflightDiagnostic ? { preflight: preflightDiagnostic } : {}),
       },
-      getCommandDoneDelivery(result),
+      "log",
       result.code === 0 ? "info" : "error",
     );
     progressRunning();

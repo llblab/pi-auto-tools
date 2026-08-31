@@ -41,7 +41,12 @@ import {
   tailRun,
   teardownRunsOwnedByParent,
 } from "../lib/async-runs.ts";
-import { executeRunRetirements, summarizeRuns } from "../lib/observability.ts";
+import {
+  createRunUiObservationState,
+  executeRunRetirements,
+  reconcileRunTerminalNotifications,
+  summarizeRuns,
+} from "../lib/observability.ts";
 import * as Limits from "../lib/limits.ts";
 import { appendRunControlInStateDir } from "../lib/runs-controls.ts";
 import { appendRunTraceEvent, summarizeRunTraceJournal, readRunTraceJournal } from "../lib/runs-trace.ts";
@@ -504,13 +509,9 @@ test("Async review evidence rejects marker prefixes", async () => {
       (event) => event.kind === "command.done" && event.data?.code === 65,
     );
     assert.equal(commandDone.data.code, 65);
-    const commandNotification = trace.find(
-      (entry) => entry.kind === "command.done" && entry.attention === "followup",
-    );
-    assert.equal(commandNotification.data.code, 65);
-    assert.equal(commandNotification.attention, "followup");
-    assert.equal(commandNotification.level, "error");
-    assert.match(commandNotification.summary, /code 65/);
+    assert.equal(commandDone.attention, undefined);
+    assert.equal(commandDone.level, "error");
+    assert.match(commandDone.summary, /code 65/);
     const progress = await waitForJsonField(
       join(stateDir, "progress.json"),
       "phase",
@@ -593,6 +594,16 @@ test("Async review reports fail closed when complete evidence references are mis
     assert.deepEqual(evidence.report_evidence.missing, [
       "execution.json#command-001",
     ]);
+    const trace = (await readFile(join(stateDir, "trace.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    const commandDone = trace.filter((event) => event.kind === "command.done");
+    assert.equal(commandDone.length, 2);
+    assert.equal(
+      commandDone.every((event) => event.attention === undefined),
+      true,
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -1202,6 +1213,80 @@ test("Recipe files can put command-template flags at the recipe top level", asyn
     const stdout = await readFile(join(stateDir, "stdout.log"), "utf8");
     assert.match(stdout, /left/);
     assert.match(stdout, /right/);
+    const trace = (await readFile(join(stateDir, "trace.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    const commandDone = trace.filter((event) => event.kind === "command.done");
+    assert.equal(commandDone.length, 2);
+    assert.equal(
+      commandDone.every((event) => event.attention === undefined),
+      true,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Parallel branch failure remains Trace-only when the root Run succeeds", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-actors-runs-soft-quorum-"));
+  const stateDir = join(root, "soft-quorum");
+  try {
+    startRun(
+      {
+        ownerId: "session-a",
+        run_id: "soft-quorum",
+        state_dir: stateDir,
+        template: [
+          {
+            parallel: true,
+            template: [
+              `${process.execPath} -e "console.log('usable')"`,
+              `${process.execPath} -e "process.exit(7)"`,
+            ],
+          },
+          `${process.execPath} -e "process.stdin.pipe(process.stdout)"`,
+        ],
+      },
+      process.cwd(),
+    );
+    const result = await waitForResult(stateDir);
+    assert.equal(result.code, 0);
+    const trace = (await readFile(join(stateDir, "trace.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    const commandDone = trace.filter((event) => event.kind === "command.done");
+    assert.equal(commandDone.length, 3);
+    assert.deepEqual(
+      commandDone
+        .map((event) => Number((event.data as Record<string, unknown>).code))
+        .sort(),
+      [0, 0, 7],
+    );
+    assert.equal(
+      commandDone.every((event) => event.attention === undefined),
+      true,
+    );
+    const delivered: Array<{ customType: string }> = [];
+    const state = createRunUiObservationState();
+    const reconcile = () =>
+      reconcileRunTerminalNotifications({
+        includeAttention: true,
+        ownerId: "session-a",
+        sink: {
+          notify: () => {},
+          sendFollowUp: (message) => delivered.push(message),
+        },
+        state,
+        stateRoot: root,
+      });
+    reconcile();
+    reconcile();
+    assert.deepEqual(
+      delivered.map((message) => message.customType),
+      ["pi-actors-run"],
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -1255,6 +1340,16 @@ test("Recipe imports execute under repeated parallel parent nodes", async () => 
     assert.match(stdout, /0-0-00/);
     assert.match(stdout, /1-1-01/);
     assert.match(stdout, /2-2-02/);
+    const trace = (await readFile(join(stateDir, "trace.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    const commandDone = trace.filter((event) => event.kind === "command.done");
+    assert.equal(commandDone.length, 3);
+    assert.equal(
+      commandDone.every((event) => event.attention === undefined),
+      true,
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }

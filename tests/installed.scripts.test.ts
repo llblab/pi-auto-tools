@@ -106,6 +106,10 @@ test("package metadata exposes compiled and source extension entrypoints", async
   assert.deepEqual(pkg.pi.sourceExtensions, ["./index.ts"]);
   assert.deepEqual(pkg.pi.skills, ["./dist/skills"]);
   assert.deepEqual(pkg.pi.sourceSkills, ["./skills"]);
+  assert.deepEqual(pkg.peerDependencies, {
+    "@earendil-works/pi-coding-agent": ">=0.84.4",
+    "@earendil-works/pi-tui": ">=0.84.4",
+  });
   await access(join(process.cwd(), pkg.pi.extensions[0]));
   await access(join(process.cwd(), pkg.pi.sourceExtensions[0]));
 });
@@ -537,6 +541,7 @@ test("packed artifact first session preserves agent-native Skill and tool parity
            },
            recipeCatalog: recipeStatus.details,
            focusedDoctor: focusedDoctor.details,
+           lifecycleEvents: [...handlers.keys()].sort(),
            resources,
            systemPrompt: startup.systemPrompt,
            tools,
@@ -558,7 +563,13 @@ test("packed artifact first session preserves agent-native Skill and tool parity
     assert.equal(pkg.version, JSON.parse(await readFile(join(process.cwd(), "package.json"), "utf8")).version);
     assert.deepEqual(pkg.pi.extensions, ["./dist/pi-actors/index.js"]);
     assert.deepEqual(pkg.pi.skills, ["./dist/skills"]);
+    assert.deepEqual(pkg.peerDependencies, {
+      "@earendil-works/pi-coding-agent": ">=0.84.4",
+      "@earendil-works/pi-tui": ">=0.84.4",
+    });
     const loaded = JSON.parse(stdout);
+    assert.equal(loaded.lifecycleEvents.includes("agent_settled"), true);
+    assert.equal(loaded.lifecycleEvents.includes("agent_end"), false);
     assert.match(loaded.systemPrompt, /^base\n\npi-actors Skill routing:/);
     assert.match(loaded.systemPrompt, /load and read the actors Skill/);
     assert.match(loaded.systemPrompt, /multiple actors or subagents.*swarm Skill/);

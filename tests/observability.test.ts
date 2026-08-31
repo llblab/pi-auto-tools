@@ -18,6 +18,7 @@ import {
   createRunUiObservationState,
   detectRunAttentionEvents,
   detectRunTransitions,
+  deliverRunAttentionNotifications,
   deliverRunTransitionNotifications,
   executeRunRetirements,
   findRunRetirementCandidates,
@@ -208,6 +209,15 @@ test("Run observability detects script-authored Trace attention", async () => {
     assert.equal(getRunAttentionNotificationType(events[0]), "info");
     assert.equal(shouldNotifyRunAttentionEvent(events[0]), true);
     assert.equal(shouldSendRunAttentionFollowUp(events[0]), true);
+    const delivered: Array<{ customType: string }> = [];
+    deliverRunAttentionNotifications(events, {
+      notify: () => {},
+      sendFollowUp: (message) => delivered.push(message),
+    });
+    assert.deepEqual(
+      delivered.map((message) => message.customType),
+      ["pi-actors-run-trace"],
+    );
     assert.deepEqual(detectRunAttentionEvents(previous, summary, seen), []);
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -652,7 +662,7 @@ test("Run observability suppresses terminal follow-up after handled stop message
   assert.equal(shouldSendRunTransitionFollowUp(transition), false);
 });
 
-test("Run observability keeps command done follow-ups compact", async () => {
+test("Run observability keeps legacy command completion out of user projection", async () => {
   const root = await mkdtemp(join(tmpdir(), "pi-actors-observe-"));
   try {
     await writeRun(root, "review", "running", [], 0, "session-a");
@@ -660,14 +670,55 @@ test("Run observability keeps command done follow-ups compact", async () => {
       join(root, "review", "trace.jsonl"),
       `${JSON.stringify({ id: "command-done", kind: "command.done", summary: "Command pi completed with code 0", attention: "followup", level: "info", data: { artifacts: { report: join(root, "review", "report.md") }, run_files: [join(root, "review", "stdout.log")] }, ts: new Date().toISOString() })}\n`,
     );
-    const events = detectRunAttentionEvents(
-      new Map<string, number>(),
-      summarizeRuns(root, "session-a"),
+    assert.deepEqual(
+      detectRunAttentionEvents(
+        new Map<string, number>(),
+        summarizeRuns(root, "session-a"),
+      ),
+      [],
     );
-    assert.equal(
-      formatRunAttentionMessage(events[0]),
-      "Run review: Command pi completed with code 0",
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Terminal reconciliation supersedes retained command completion attention", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-actors-terminal-supersession-"));
+  const stateDir = join(root, "review");
+  try {
+    await writeRun(root, "review", "done", [], 0, "session-a");
+    appendRunTraceEvent(stateDir, {
+      attention: "followup",
+      kind: "command.done",
+      summary: "Reviewer branch completed",
+    });
+    const delivered: Array<{ customType: string }> = [];
+    const state = createRunUiObservationState();
+    reconcileRunTerminalNotifications({
+      includeAttention: true,
+      ownerId: "session-a",
+      sink: {
+        notify: () => {},
+        sendFollowUp: (message) => delivered.push(message),
+      },
+      state,
+      stateRoot: root,
+    });
+    assert.deepEqual(
+      delivered.map((message) => message.customType),
+      ["pi-actors-run"],
     );
+    reconcileRunTerminalNotifications({
+      includeAttention: true,
+      ownerId: "session-a",
+      sink: {
+        notify: () => {},
+        sendFollowUp: (message) => delivered.push(message),
+      },
+      state,
+      stateRoot: root,
+    });
+    assert.equal(delivered.length, 1);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
