@@ -1164,7 +1164,10 @@ case "$1:$2" in
   status:-n) printf 'Audio\\n └─ Streams:\\n        88. ffplay\\n\\nVideo\\n' ;;
   inspect:88) printf '  * client.id = "99"\\n  * media.class = "Stream/Output/Audio"\\n' ;;
   inspect:99) printf '    application.process.id = "%s"\\n' "$(cat "$WPCTL_PID_FILE")" ;;
-  set-volume:88) printf '%s %s\\n' "$2" "$3" >> "$WPCTL_LOG_FILE" ;;
+  set-volume:88)
+    # Keep backend completion observably later than the player status update.
+    sleep 0.1
+    printf '%s %s\\n' "$2" "$3" >> "$WPCTL_LOG_FILE" ;;
   *) exit 1 ;;
 esac
 `,
@@ -1263,14 +1266,15 @@ esac
     } else {
       assert.equal(Number.isInteger(clientStatus.progress_percent), true);
     }
-    await deliverRunControl("music", stateDir, {
+    const volumeControl = await deliverRunControl("music", stateDir, {
       action: "volume",
       input: { percent: 63 },
       run_instance_id: "generation-a",
     });
+    assert.match(String(volumeControl.control_id), /^[0-9a-f-]+$/);
     await waitForText(
       join(stateDir, "controls.jsonl"),
-      /"action":"volume".*"status":"handled"/,
+      new RegExp(`"id":"${volumeControl.control_id}".*"status":"handled"`),
     );
     const volumeState = JSON.parse(
       await waitForText(
