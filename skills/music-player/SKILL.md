@@ -13,7 +13,7 @@ When a Telegram-originated turn or explicit Telegram-control question makes repe
 
 ## Playback
 
-`music-player/playback` is a singleton async controlled service with the canonical address `run:music-player`. The Recipe is the sole lifecycle owner: it starts the service, supervises it, and stops playback when the Run closes. The service owns queue, backend, checkpoint, and playback state. `playback-client.mjs` is a pure actor-neutral RPC client; it never starts, adopts, supervises, or signals a service. The executable also supports explicit foreground `serve` for development or a caller-owned standalone host, but Actor and standalone ownership of one state directory are mutually exclusive.
+`music-player/playback` is a singleton async controlled service with the canonical address `run:music-player`. The Recipe is the sole lifecycle owner: it starts the service, supervises it, and stops playback when the Run closes. The service owns queue, backend, checkpoint, and playback state. `scripts/playback.mjs` owns both foreground playback and the bounded control CLI. Its `control <state-dir> <action> [percent]` entrypoint observes or controls an existing owner without starting, adopting, or supervising it. Explicit foreground `serve` supports a caller-owned standalone host without importing the Actor runtime; Actor and standalone ownership of one state directory are mutually exclusive.
 
 ```text
 spawn recipe=music-player/playback values={"source":"~/Music","player":"auto"}
@@ -35,14 +35,14 @@ Use only declared actions: `play`, `pause`, `resume`, `toggle`, `next`, `previou
 - `status` is read-only and exposes bounded machine-readable player state, including the current absolute volume and a duration-derived progress percentage projected at read time.
 - `stop` ends the live process without silently deleting the saved queue.
 
-External local views use the actor-neutral playback client against the canonical service state directory. They must not read or edit Run files, signal playback processes, construct Actor Control records, or import pi-actors internals. The client validates bounded commands, exact service generation, structured responses, and active endpoint ownership before returning success.
+External local views use `playback.mjs control <state-dir> <action> [percent]`. For Actor-owned playback, the script validates Run availability, queues canonical Control, and waits for that exact record to become handled or failed. For standalone playback, it sends a bounded generation-fenced command to the service endpoint without creating Run, Control, or Trace state. Views themselves never read or edit Run files, signal processes, construct Control records, or import pi-actors internals. `status` is read-only and reports `actor_available` separately from playback state.
 
 ## Maintained Telegram View
 
 > [!NOTE]
 > This Skill includes a ready Music Player Generative App at `genapps/music-player.mjs`. When `telegram_bind` is available and Telegram interaction is relevant, use it to copy and install the app as `music-player`; hot replacement keeps the same app name with `replace: true`.
 
-Bind with absolute `control`, `stateDir`, and `node` arguments. The adapter reports whether the Actor control surface is actually available. Every mutating button queues a canonical Actor Control through `playback.mjs` and waits for that exact record to become handled or failed, so terminal evidence remains visible in the Run inspector and failures reach Telegram; bounded status projection is read-only. The adapter neither imports extension internals nor starts playback. Its stopped-state Start button returns to Pi so the composition root can spawn `music-player/playback`, while active controls remain deterministic Generative App actions that bypass the model. `pi-telegram` owns only the generic Generative App runtime.
+Bind with absolute `control` (the `scripts/playback.mjs` path), `stateDir`, and `node` arguments. This maintained adapter targets Actor-owned playback and uses the unified `control` entrypoint above for status and mutation; it displays controls only when `actor_available` is true. Exact terminal Control evidence remains visible in the Run inspector and failures reach Telegram. The adapter neither imports extension internals nor starts playback. Its stopped-state Start button returns to Pi so the composition root can spawn `music-player/playback`, while active controls remain deterministic Generative App actions that bypass the model. `pi-telegram` owns only the generic Generative App runtime.
 
 ## Sources And Backends
 

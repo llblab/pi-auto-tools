@@ -227,6 +227,8 @@ test("Packaged swarm composes with actors as methodology only", () => {
   assert.match(review, /## Merge protocol/);
   assert.match(review, /## Conflict and disagreement/);
   assert.match(review, /## Post-merge review/);
+  assert.match(development, /\.\.\/SKILL\.md#reasoning-allocation/);
+  assert.match(swarm, /## Reasoning allocation/);
   assert.match(development, /## Task card/);
   assert.match(development, /## Write ownership/);
   assert.match(development, /## Conflict evidence/);
@@ -316,6 +318,14 @@ test("Packaged actors skill is the decision-first operating protocol", () => {
   assert.ok(chooseAt > 0);
   assert.ok(distinctionsAt > chooseAt);
   assert.ok(persistentAt > distinctionsAt);
+  const capabilityMap = actorSkill.split("## Capability map")[1]?.split("## Delegation boundary")[0] ?? "";
+  for (const skillPath of packagedSkillPaths) {
+    assert.ok(capabilityMap.includes(`\`${dirname(skillPath).split("/").at(-1)}\``));
+  }
+  for (const file of readdirSync("skills/actors/recipes")) {
+    const stem = file.replace(/\.(json|md)$/, "");
+    assert.ok(capabilityMap.includes(`\`${stem}\``), `${stem} must route through actors`);
+  }
   assert.match(actorSkill, /spawn recipe=<skill>\/<recipe>/);
   assert.match(actorSkill, /register_tool from=<skill>\/<recipe>/);
   assert.match(actorSkill, /Skill Recipe ≠ registered tool/);

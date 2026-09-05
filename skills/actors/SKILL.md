@@ -76,16 +76,26 @@ Then:
 
 Use direct delegation for the same maintained capability under a persistent name or narrower defaults. Use named imports only when one Recipe graph contains reusable child nodes. See [persistent tools](./references/persistent-tools.md) and [Recipes](./references/recipes.md).
 
-## Local coordinator topology
+## Capability map
 
-There are two distinct multi-instance shapes:
+Recipes remain with the Skill that owns their behavior. Load that Skill for selection and caller inputs; this map is routing, not a copied Recipe contract.
 
-- A gateway-centric system owns ingress, agent-instance creation, routing, and lifecycle outside the agents.
-- A host-coordinator system keeps the current Pi instance as the control plane; companion extensions such as Telegram provide presence, while pi-actors creates explicit local Runs for delegated work.
+| Owner | Recipe families |
+| --- | --- |
+| `actors` | `command-validate`, `recipe-validate`, `jsonl-tail`, `run-summary`, `run-state-files`, `run-ops-snapshot`, `resource-locker`, `resource-locker-snapshot` |
+| `swarm` | Lens and quorum reviews, research synthesis, architecture, development tasking, readiness, and supporting `subagent-*` components |
+| `artifacts` | Report, write, manifest, bundle, and supporting file-write |
+| `project-work` | Repository health, docs maintenance, release readiness/summary, Run reports, and supporting deterministic snapshots |
+| `music-player` | The controlled `playback` singleton |
+| `recipe-memory` | Internal automatic reviewers; use its Skill only for diagnosis/recovery |
 
-In host-coordinator mode, the top-level agent receives declarative outcomes, preserves user authority and global context, delegates bounded concrete execution, and owns integration plus final validation. It is not merely another worker after delegation begins. One bounded implementation worker normally runs with reasoning off; consequential output receives a separate reasoning-enabled review. Several independent participants or reviewers additionally use `swarm`.
+Use the `actors/*` helpers only for their narrow requested result or intentional composition. Prefer public `inspect` for ordinary runtime diagnosis and the capability's primary workflow for a complete outcome.
 
-Delegation is not mandatory for every prompt. Work inline when one short bounded act has one natural validation boundary and spawning would add more coordination than isolation, latency hiding, clean context, or continued coordinator availability can repay. For admitted delegation, prefer the settled completion batch and durable Trace/artifacts; inspect on meaningful attention, operator request, or an evidence-based overdue timer rather than busy polling. Treat `attention: "steer"` as an actor-authored urgent semantic checkpoint at Pi's next safe boundary, never as a status-derived completion signal; the later root terminal still arrives through its ordinary completion batch.
+## Delegation boundary
+
+The current Pi instance owns user authority and the final result; pi-actors creates explicit local Runs, while companion transports provide presence rather than hidden instance creation. Keep short single-boundary work inline when delegation adds no value. For several participants, reasoning allocation, quorum, or integration methodology, read `swarm`.
+
+Treat `attention: "steer"` as an actor-authored urgent semantic checkpoint at Pi's next safe boundary, never as a status-derived completion signal; the later root terminal still arrives through its ordinary completion batch.
 
 ## Run workflow
 

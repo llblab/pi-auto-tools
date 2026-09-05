@@ -1,5 +1,0 @@
-{
-  "description": "Validate the pi-actors local source dependency graph and composition-root boundary.",
-  "args": ["root:path=."],
-  "template": "{skill_dir}/scripts/validate-domain-dag.mjs --root {root} --config {skill_dir}/domain-dag.json"
-}

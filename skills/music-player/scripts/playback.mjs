@@ -27,7 +27,7 @@ import {
   watch,
   writeFileSync,
 } from "node:fs";
-import { createServer } from "node:net";
+import { createConnection, createServer } from "node:net";
 import { homedir } from "node:os";
 import {
   basename,
@@ -66,7 +66,7 @@ let updateRunControlStatusInStateDir;
 let isAlive;
 let verifyRunProcessIdentity;
 let appendRunTraceEvent = () => {};
-if (actorAdapterEnabled) {
+async function loadActorAdapter() {
   ({
     appendRunControlInStateDir,
     claimRunControlByIdInStateDir,
@@ -110,8 +110,9 @@ function usage() {
   playback.mjs control <state-dir> <play|pause|toggle|next|previous|seek|volume|stop|status> [percent]
 
 Runs a foreground music player so pi-actors can own it as a controlled Run.
-Controls use canonical records in <state-dir>/controls.jsonl.
-Prefer message target=run:<run> action=<command>, or use direct control commands below.
+Actor-owned controls use canonical records in <state-dir>/controls.jsonl.
+Standalone controls use the generation-fenced playback service endpoint.
+Prefer message target=run:<run> action=<command> for Actors; external adapters use control <state-dir> <action>.
 Supported players: auto, mpv, afplay, ffplay, cvlc, play, wmp.
 `);
 }
@@ -1134,6 +1135,7 @@ function readAndClearCommand(ctx) {
 }
 
 async function playMain(args) {
+  if (actorAdapterEnabled) await loadActorAdapter();
   const [
     sourceArg,
     loopArg = "true",
@@ -1333,28 +1335,72 @@ function projectCurrentProgress(status, nowMs = Date.now()) {
   };
 }
 
-function actorControlAvailability(stateDir) {
+async function actorControlAvailability(stateDir) {
   const run = readJsonFile(join(stateDir, "run.json"), {});
   const result = readJsonFile(join(stateDir, "result.json"), {});
   const endpoint = readJsonFile(join(stateDir, "control-endpoint.json"), {});
   const playerStatus = readJsonFile(join(stateDir, "player.json"), {});
+  const runInstanceId = typeof run.run_instance_id === "string"
+    ? run.run_instance_id
+    : undefined;
+  // Inactive status must remain readable without an installed Actor runtime,
+  // including standalone state beside metadata from a rejected Actor launch.
+  if (!runInstanceId || typeof result.completedAt === "string" ||
+      endpoint.run_instance_id !== runInstanceId ||
+      !["playing", "paused"].includes(playerStatus.state)) {
+    return { available: false, runInstanceId };
+  }
+  if (!verifyRunProcessIdentity) {
+    await loadActorAdapter();
+    // Re-read authority after the asynchronous import before admitting control.
+    return actorControlAvailability(stateDir);
+  }
   const pid = Number(run.pid || 0);
   const hasProcessIdentity = pid > 0 || run.process_identity !== undefined;
   const processIdentity = pid > 0
     ? verifyRunProcessIdentity(pid, run.process_identity)
     : { valid: false };
-  const available =
-    typeof run.run_instance_id === "string" &&
-    typeof result.completedAt !== "string" &&
-    (!hasProcessIdentity || (pid > 0 && isAlive(pid) && processIdentity.valid === true)) &&
-    endpoint.run_instance_id === run.run_instance_id &&
-    ["playing", "paused"].includes(playerStatus.state);
   return {
-    available,
-    runInstanceId: typeof run.run_instance_id === "string"
-      ? run.run_instance_id
-      : undefined,
+    available: !hasProcessIdentity ||
+      (pid > 0 && isAlive(pid) && processIdentity.valid === true),
+    runInstanceId,
   };
+}
+
+async function sendPlaybackCommand(endpoint, action, input) {
+  const payload = `${JSON.stringify({
+    action,
+    ...(input !== undefined ? { input } : {}),
+    service_instance_id: endpoint.service_instance_id,
+  })}\n`;
+  const response = await new Promise((resolveResponse, rejectResponse) => {
+    const socket = createConnection(endpoint.path);
+    let content = "";
+    const timeout = setTimeout(() => {
+      socket.destroy(new Error("playback service command timed out"));
+    }, 5_000);
+    timeout.unref?.();
+    socket.setEncoding("utf8");
+    socket.on("connect", () => socket.write(payload));
+    socket.on("data", (chunk) => {
+      content += chunk;
+      if (Buffer.byteLength(content, "utf8") > 4096) {
+        socket.destroy(new Error("playback service response is too large"));
+      }
+    });
+    socket.on("close", () => clearTimeout(timeout));
+    socket.on("error", rejectResponse);
+    socket.on("end", () => {
+      try {
+        resolveResponse(JSON.parse(content.trim()));
+      } catch {
+        rejectResponse(new Error("playback service returned invalid JSON"));
+      }
+    });
+  });
+  if (response?.ok !== true) {
+    throw new Error(response?.error || "playback service rejected the command");
+  }
 }
 
 async function controlMain(args) {
@@ -1365,13 +1411,20 @@ async function controlMain(args) {
     usage();
     process.exit(2);
   }
-  mkdirSync(stateDir, { recursive: true });
+  if (!CONTROL_COMMANDS.has(command)) fail(`unsupported command: ${command}`, 2);
+  const endpoint = readJsonFile(join(stateDir, "playback-endpoint.json"), {});
+  // A standalone service retains authority even if an unsuccessful Actor launch
+  // left Run metadata beside its endpoint. Clients never start or adopt it.
+  const actorOwned = endpoint.owner_mode !== "standalone" &&
+    existsSync(join(stateDir, "run.json"));
   if (command === "status") {
     const statusFile = join(stateDir, "player.json");
     const status = exists(statusFile)
       ? readJsonFile(statusFile, { state: "unknown" })
       : { state: "unknown" };
-    const actor = actorControlAvailability(stateDir);
+    const actor = actorOwned
+      ? await actorControlAvailability(stateDir)
+      : { available: false };
     process.stdout.write(`${JSON.stringify({
       ...projectCurrentProgress(status),
       actor_available: actor.available,
@@ -1381,7 +1434,7 @@ async function controlMain(args) {
     })}\n`);
     return;
   }
-  if (!actorControlAvailability(stateDir).available) {
+  if (actorOwned && !(await actorControlAvailability(stateDir)).available) {
     fail(`Run playback is not active: ${stateDir}`, 3);
   }
   let input;
@@ -1394,6 +1447,20 @@ async function controlMain(args) {
       };
     } catch (error) {
       fail(error instanceof Error ? error.message : String(error), 2);
+    }
+  }
+  if (!actorOwned) {
+    if (endpoint.owner_mode !== "standalone" ||
+        typeof endpoint.path !== "string" || !endpoint.path ||
+        typeof endpoint.service_instance_id !== "string" || !endpoint.service_instance_id) {
+      fail(`standalone playback service is not active: ${stateDir}`, 3);
+    }
+    try {
+      await sendPlaybackCommand(endpoint, command === "resume" ? "play" : command, input);
+      console.log(`music-player: command=${command} handled state_dir=${stateDir}`);
+      return;
+    } catch (error) {
+      fail(error instanceof Error ? error.message : String(error), 3);
     }
   }
   const queued = appendControl(

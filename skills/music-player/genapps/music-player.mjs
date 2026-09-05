@@ -70,7 +70,7 @@ function normalizePlayback(status) {
 async function readPlayback(adapter, run) {
   const result = await run({
     command: adapter.node,
-    args: [adapter.control, "status", adapter.stateDir],
+    args: [adapter.control, "control", adapter.stateDir, "status"],
     cwd: dirname(adapter.control),
     timeoutMs: 5_000,
   });
@@ -188,8 +188,9 @@ async function applyVolume(percent, context) {
     command: context.state.adapter.node,
     args: [
       context.state.adapter.control,
-      "volume",
+      "control",
       context.state.adapter.stateDir,
+      "volume",
       String(percent),
     ],
     cwd: dirname(context.state.adapter.control),
@@ -224,8 +225,9 @@ async function applySeek(percent, context) {
     command: context.state.adapter.node,
     args: [
       context.state.adapter.control,
-      "seek",
+      "control",
       context.state.adapter.stateDir,
+      "seek",
       String(percent),
     ],
     cwd: dirname(context.state.adapter.control),
@@ -253,7 +255,7 @@ async function apply(action, context) {
   const before = await readPlayback(context.state.adapter, context.run);
   const result = await context.run({
     command: context.state.adapter.node,
-    args: [context.state.adapter.control, action, context.state.adapter.stateDir],
+    args: [context.state.adapter.control, "control", context.state.adapter.stateDir, action],
     cwd: dirname(context.state.adapter.control),
     timeoutMs: 5_000,
   });
