@@ -9,6 +9,7 @@ import { access, chmod, cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, sym
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { promisify } from "node:util";
+import { pathToFileURL } from "node:url";
 import test from "node:test";
 
 import { deliverRunControl } from "../lib/runs-control-delivery.ts";
@@ -902,25 +903,38 @@ test("music-player standalone service uses only the neutral playback protocol", 
     await chmod(fakePlayer, 0o755);
   }
   const service = join(process.cwd(), "skills", "music-player", "scripts", "playback.mjs");
-  const client = join(process.cwd(), "skills", "music-player", "scripts", "playback-client.mjs");
+  const client = join(root, "playback.mjs");
+  await cp(service, client);
   const env = { ...process.env, PATH: `${root}${delimiter}${process.env.PATH ?? ""}` };
   await assert.rejects(
-    execFileAsync(process.execPath, [client, "start", stateDir, source], { env }),
-    /usage: playback-client\.mjs/,
+    execFileAsync(process.execPath, [client, "control", stateDir, "start"], { env }),
+    /unsupported command: start/,
   );
   const child = spawn(
     process.execPath,
-    [service, "serve", source, "false", "70", "ffplay", stateDir],
+    [client, "serve", source, "false", "70", "ffplay", stateDir],
     { env, stdio: ["ignore", "pipe", "pipe"] },
   );
   try {
     await waitForText(join(stateDir, "playback-endpoint.json"), /service_instance_id/);
-    await execFileAsync(process.execPath, [client, "pause", stateDir], { env });
+    const endpointPath = join(stateDir, "playback-endpoint.json");
+    const endpoint = await readFile(endpointPath, "utf8");
+    await writeFile(endpointPath, JSON.stringify({ ...JSON.parse(endpoint), service_instance_id: "stale" }));
+    await assert.rejects(
+      execFileAsync(process.execPath, [client, "control", stateDir, "pause"], { env }),
+      /invalid playback protocol command/,
+    );
+    await writeFile(endpointPath, endpoint);
+    await assert.rejects(
+      execFileAsync(process.execPath, [client, "control", stateDir, "volume", "101"], { env }),
+      /percent/,
+    );
+    await execFileAsync(process.execPath, [client, "control", stateDir, "pause"], { env });
     const paused = JSON.parse(
       (await execFileAsync(process.execPath, [client, "status", stateDir], { env })).stdout,
     );
     assert.equal(paused.state, "paused");
-    await execFileAsync(process.execPath, [client, "play", stateDir], { env });
+    await execFileAsync(process.execPath, [client, "control", stateDir, "play"], { env });
     await execFileAsync(process.execPath, [client, "stop", stateDir], { env });
     const code = await Promise.race([
       new Promise((resolve) => child.once("exit", resolve)),
@@ -936,7 +950,7 @@ test("music-player standalone service uses only the neutral playback protocol", 
 
     const standalone = spawn(
       process.execPath,
-      [service, "serve", source, "false", "70", "ffplay", stateDir],
+      [client, "serve", source, "false", "70", "ffplay", stateDir],
       { env, stdio: ["ignore", "pipe", "pipe"] },
     );
     await waitForText(
@@ -961,6 +975,18 @@ test("music-player standalone service uses only the neutral playback protocol", 
     );
     await execFileAsync(process.execPath, [client, "stop", stateDir], { env });
     await new Promise((resolve) => standalone.once("exit", resolve));
+    const filesBeforeStatus = (await readdir(stateDir)).sort();
+    const stopped = JSON.parse((await execFileAsync(process.execPath,
+      [client, "control", stateDir, "status"], { env })).stdout);
+    assert.equal(stopped.state, "stopped");
+    assert.equal(stopped.actor_available, false);
+    assert.deepEqual((await readdir(stateDir)).sort(), filesBeforeStatus);
+    await assert.rejects(
+      execFileAsync(process.execPath, [client, "control", stateDir, "resume"], { env }),
+      /Run playback is not active/,
+    );
+    assert.equal(await readTextIfExists(join(stateDir, "controls.jsonl")), "");
+    assert.equal(await readTextIfExists(join(stateDir, "trace.jsonl")), "");
   } finally {
     child.kill("SIGKILL");
     await removeTreeEventually(root);
@@ -1195,26 +1221,39 @@ esac
       "skills",
       "music-player",
       "scripts",
-      "playback-client.mjs",
+      "playback.mjs",
     );
-    await execFileAsync(process.execPath, [client, "volume", stateDir, "62"], {
-      env: {
-        ...process.env,
-        PATH: `${root}${delimiter}${process.env.PATH ?? ""}`,
-        WPCTL_LOG_FILE: wpctlLog,
-        WPCTL_PID_FILE: join(stateDir, "current.pid"),
-      },
-    });
+    const app = await import(pathToFileURL(join(process.cwd(), "skills", "music-player", "genapps", "music-player.mjs")).href);
+    const run = async ({ command, args, cwd, timeoutMs }: {
+      command: string; args: string[]; cwd: string; timeoutMs: number;
+    }) => {
+      assert.equal(args[0], client);
+      assert.equal(args[1], "control");
+      assert.equal(args[2], stateDir);
+      const result = await execFileAsync(command, args, {
+        cwd, timeout: timeoutMs,
+        env: {
+          ...process.env,
+          PATH: `${root}${delimiter}${process.env.PATH ?? ""}`,
+          WPCTL_LOG_FILE: wpctlLog,
+          WPCTL_PID_FILE: join(stateDir, "current.pid"),
+        },
+      });
+      return { code: 0, ...result };
+    };
+    const initialView = await app.init({ argument: { control: client, stateDir, node: process.execPath }, run });
+    assert.equal(initialView.state.playback.actorAvailable, true);
+    const volumeView = await app.volume({ argument: 62, state: initialView.state, run });
+    assert.equal(volumeView.state.playback.volume, 62);
     const clientVolumeState = JSON.parse(
       await waitForText(join(stateDir, "player.json"), /"volume":62/),
     );
     if (process.platform === "win32") {
       playbackPids.add(Number(clientVolumeState.pid));
     }
-    assert.equal(
-      await readTextIfExists(join(stateDir, "controls.jsonl")),
-      controlsBeforeClient,
-    );
+    const controlsAfterClient = await readTextIfExists(join(stateDir, "controls.jsonl"));
+    assert.notEqual(controlsAfterClient, controlsBeforeClient);
+    assert.match(controlsAfterClient, /"action":"volume".*"percent":62.*"status":"handled"/);
     const clientStatus = JSON.parse(
       (await execFileAsync(process.execPath, [client, "status", stateDir])).stdout,
     );
@@ -1375,18 +1414,21 @@ esac
     }
     const volumeControls = controls.filter((control) => control.action === "volume");
     assert.deepEqual(volumeControls.map((control) => control.input), [
+      { percent: 62 },
       { percent: 63 },
       { percent: 101 },
       { percent: 57 },
     ]);
     assert.deepEqual(volumeControls.map((control) => control.status), [
       "handled",
+      "handled",
       "failed",
       "handled",
     ]);
-    assert.equal(typeof volumeControls[0]?.delivered_at, "string");
-    assert.match(volumeControls[1]?.error ?? "", /integer 0\.\.100/);
-    assert.equal(Object.hasOwn(volumeControls[2] ?? {}, "delivered_at"), false);
+    assert.equal(Object.hasOwn(volumeControls[0] ?? {}, "delivered_at"), false);
+    assert.equal(typeof volumeControls[1]?.delivered_at, "string");
+    assert.match(volumeControls[2]?.error ?? "", /integer 0\.\.100/);
+    assert.equal(Object.hasOwn(volumeControls[3] ?? {}, "delivered_at"), false);
     const volumeTrace = await readFile(join(stateDir, "trace.jsonl"), "utf8");
     assert.match(volumeTrace, /"kind":"player\.volume"/);
     assert.match(volumeTrace, /"percent":57/);

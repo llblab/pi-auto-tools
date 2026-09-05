@@ -36,7 +36,7 @@ Artifact pipelines terminate in files/manifests and result evidence; they do not
 
 ### Music playback and controlled services
 
-- `music-player/playback` — singleton playback service that resolves files, directories, URLs, explicit lists, and playlist files into one persistent queue; it exposes declared playback Controls including arbitrary absolute `volume` percentages, generation-fenced endpoint readiness, structured status, a player-owned continuity checkpoint, and playback Trace. Player selection is `player:enum(auto,mpv,afplay,ffplay,cvlc,play,wmp)=auto`.
+- `music-player/playback` — singleton playback service that resolves files, directories, URLs, explicit lists, and playlist files into one persistent queue; it exposes declared playback Controls including arbitrary absolute `volume` percentages, generation-fenced endpoint readiness, structured status, a player-owned continuity checkpoint, and playback Trace. Player selection is `player:enum(auto,mpv,afplay,ffplay,cvlc,play,wmp)=auto`. The single `skills/music-player/scripts/playback.mjs` executable also supports standalone foreground `serve` and `control <state-dir> <action> [percent]`; control observes the existing owner, using canonical Control records for Actors and generation-fenced RPC for standalone playback. The maintained Generative App uses that same control entrypoint for Actor-owned playback.
 - `actors/resource-locker` — optional queue/lease-lock service with explicit owner/resource input, lock Trace, and a 512-record/1 MiB atomically retained journal.
 
 These Recipes declare actor-local Control. Ordinary one-shot Recipes omit it. Helper-backed Skill Recipes self-locate through runtime-owned `{skill_dir}`; callers do not pass package installation roots.

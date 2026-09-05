@@ -9,13 +9,9 @@ Use multi-actor execution only when at least two scopes or evidence lenses are m
 
 Read `actors` first for generic Recipe, spawn, Run, Trace, Control, artifact, and lifecycle operation. This Skill owns only multi-actor methodology: decomposition, scope ownership, independence, synthesis, integration, and completion proof.
 
-## Coordinator topology
+## Coordinator and participants
 
-A swarm can be coordinated without an external gateway. In this model the current host agent is the declarative control plane, the actor kernel creates explicit participant Runs, and companion transports provide ingress or presence without owning hidden agent creation. The coordinator retains user authority, global context, decomposition, shared-surface ownership, integration, and final validation; participants own bounded concrete tasks and report evidence.
-
-This resembles gateway orchestration in dependency direction but not in ownership: the coordinator is itself an agent instance with inspectable Runs, not an infrastructure service that implicitly creates sessions. Preserve that distinction in prompts, docs, recovery, and target routing.
-
-Once work is delegated, keep the coordinator available for decisions and integration instead of duplicating participant implementation. Wait for the settled completion batch by default; use meaningful attention or evidence-based timers for overdue work rather than a tight inspection loop.
+The coordinator owns decomposition, shared contracts, integration order, and final validation. Participants own bounded tasks or evidence lenses. Keep the coordinator available for decisions instead of duplicating participant implementation; use `actors` for launch, observation, and lifecycle mechanics.
 
 ## Reasoning allocation
 

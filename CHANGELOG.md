@@ -2,6 +2,12 @@
 
 > Each release keeps at most 8 outcome records of at most 512 characters.
 
+## 0.52.1: Unified Playback Control Hotfix
+
+- `Unified Playback CLI`: Consolidates standalone playback and external control into `playback.mjs`; standalone commands remain runtime-independent, while Actor-owned commands retain exact terminal Control evidence. The maintained Music Player Generative App uses the same explicit control entrypoint. Post-stop status remains readable despite leftover Run metadata; inactive controls fail before journal admission. External callers of the removed `playback-client.mjs` use `playback.mjs control` instead.
+- `Skill Ownership`: Keeps extension operation and the capability/Recipe map in Actors, multi-participant coordination and quorum in Swarm, and development detail in focused references. Preserves registration/agent-journey evidence routing in AGENTS while removing obsolete delivery Skills, historical evidence reports, and tests coupled only to that retired prose.
+- `Local Architecture Tooling`: Restores the project-local Domain DAG Skill's portable, configurable graph validator and focused maintenance contract, replacing repository-specific defaults and removing its obsolete Recipe/config wrappers. Architecture tooling remains agent-owned and outside npm publication and CI gates.
+
 ## 0.52.0: Durable Coordinator Delivery
 
 - `Completion Epochs`: Replaces per-Run terminal turns with one immutable owner-fenced completion batch per idle/settled epoch. Batches retain exact Run generations and terminal timestamps, bound durable and model-facing members, preserve silent and synchronous-stop semantics, and remain eligible after urgent steering.

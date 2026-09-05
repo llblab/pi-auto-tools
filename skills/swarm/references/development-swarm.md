@@ -14,38 +14,9 @@ Use a development swarm only when all are true:
 
 Do not parallelize implementation when tasks need the same central files, semantic ordering dominates wall-clock time, or the likely conflicts would invalidate the decomposition. Use planning or review first.
 
-## Coordinator role separation
+## Roles and reasoning
 
-In a host-coordinator topology, the current Pi instance owns the declarative outcome and participant graph rather than acting as the default implementation worker. It may receive intent through Telegram or another companion extension, but transport does not become a gateway or gain hidden instance-creation authority; participant creation remains an explicit actor-kernel Run.
-
-The coordinator should:
-
-- Translate high-level intent into bounded task cards and dependency edges.
-- Keep user authority, shared contracts, integration order, and final validation local.
-- Remain available for checkpoints, permissions, conflicts, and changing evidence.
-- Consume terminal handoffs, durable artifacts, and Trace attention instead of mirroring participant work.
-- Check overdue work on an evidence-based timer; never replace event-driven completion with a rapid polling loop.
-
-A participant should:
-
-- Own one concrete execution or evidence boundary.
-- Avoid global orchestration and undeclared participant creation.
-- Return a bounded handoff that lets the coordinator decide without replaying the entire task.
-
-Use one ordinary Run under `actors` when only one worker is delegated. Activate this development-swarm protocol when two or more participants, parallel ownership, or explicit integration edges exist. Keep trivial single-boundary work inline when delegation overhead has no compensating value.
-
-## Reasoning profiles
-
-| Role | Default | Raise or fan out when |
-| --- | --- | --- |
-| Bounded implementation author | Reasoning off | The card explicitly owns unresolved diagnosis or design judgement |
-| Reviewer | Medium reasoning, clean context | Stakes require independent lenses or repeated judges |
-| Synthesizer / integrator | Medium reasoning | Evidence conflicts, shared contracts move, or merge order is semantic |
-| Coordinator | Sufficient for decomposition and decisions | Scope, authority, or architecture remains unresolved |
-
-Prefer independent review after implementation over asking one author thread to implement, retain all local assumptions, and then certify itself. When risk justifies the cost, use multiple independent reviewers: different lenses increase breadth, while repeated judges increase confidence. Preserve minority high-impact findings and merge only evidence-backed conclusions.
-
-More reviewers are not automatically better. Do not fan out when they would inspect unstable code, share contaminated context, repeat one unsupported claim, or exceed the value of the decision. Never change an already-running participant solely to enforce a newer profile; add a fresh review boundary if evidence remains open.
+Apply [Swarm's coordinator and reasoning contract](../SKILL.md#reasoning-allocation). Task cards record those profiles and the owned execution boundary; participants return evidence without undeclared orchestration. Do not fan out review over unstable code or contaminated context. The sections below specify development-only task cards, ownership transfers, conflict reports, and integration.
 
 ## Decompose by ownership
 

@@ -214,44 +214,6 @@ test("Agent Journeys A-D preserve one-off, persistent, degraded, and unavailable
   }
 });
 
-test("Fresh-agent Journey B evidence records packaged Skill-driven completion", () => {
-  const evidence = readFileSync(
-    ".agents/evidence/agent-journey-b.md",
-    "utf8",
-  );
-  assert.match(evidence, /release-candidate `dist` extension and packaged `dist\/skills`/);
-  assert.match(evidence, /no repository context/);
-  assert.match(evidence, /read only the packaged `actors` and `media` Skill bodies/);
-  assert.match(evidence, /`callable_now=true`/);
-  assert.match(evidence, /generated `music_player` tool with `command=status`/);
-  assert.match(evidence, /`launch_kind=tool`/);
-  assert.match(evidence, /\*\*Accepted\.\*\*/);
-  assert.match(evidence, /no README\/docs read.*helper\/script source read.*`bash -lc`.*copied Recipe contract.*`spawn` substituted/s);
-});
-
-test("Agent UX report closure retains an owner and evidence for every failure", () => {
-  const closure = readFileSync(
-    ".agents/evidence/agent-ux-report-closure.md",
-    "utf8",
-  );
-  const closedRows = closure
-    .split(/\r?\n/)
-    .filter((line) => line.startsWith("|") && line.endsWith("| Closed |"));
-  assert.equal(closedRows.length, 14);
-  for (const section of [
-    "Knowledge architecture and precedence",
-    "Actors operating protocol",
-    "Persistent tool authoring",
-    "Diagnosis and recovery",
-    "Capability and swarm Skills",
-    "Human/agent content ownership",
-    "Journey and installed parity",
-    "Residual assessment",
-  ]) assert.match(closure, new RegExp(`## ${section}`));
-  assert.match(closure, /No material finding from the report remains unowned or deferred/);
-  assert.match(closure, /No row is deferred to a hypothetical `0\.48` cleanup release/);
-});
-
 test("Music Player routes Telegram control intent to its maintained Generative App", () => {
   const music = readFileSync("skills/music-player/SKILL.md", "utf8");
 

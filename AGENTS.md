@@ -144,6 +144,7 @@ When deferred Run results gate the next step, wait for their completion batch. I
 
 - Keep published text portable: use `~`, `<repo>`, or relative paths.
 - Update `skills/actors/SKILL.md` when durable operating mechanics change.
+- For registration or agent-instruction changes, use `tests/registration-truth.test.ts` for resolution/admission/activation truth and `tests/agent-journeys.test.ts` for public agent journeys, then check installed-package parity at the affected boundary. Fresh-agent operating evidence must use the active Skills and public tools rather than repository source or copied helper contracts.
 - Keep `skills/swarm/SKILL.md` focused on multi-agent methodology rather than kernel internals.
 - Recipe `description` is optional. Skill Recipe QA recursively validates direct filesystem-owned components and capability semantics with zero diagnostics or warnings; it does not enforce aesthetics or architecture policy.
 - Before release run the normal product validation and dependency audit. Use the project-local Domain DAG Skill during architecture-affecting development, not as publication automation.
